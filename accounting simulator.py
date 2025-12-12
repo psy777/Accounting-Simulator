@@ -3,6 +3,8 @@ import sys
 import re
 from collections import defaultdict
 from datetime import date, timedelta
+import tkinter as tk
+from tkinter import ttk, messagebox
 import requests
 
 class AccountingSimulator:
@@ -44,6 +46,12 @@ class AccountingSimulator:
         self.use_ollama = False
         self.ollama_model = "llama3"
         self.ollama_url = "http://localhost:11434"
+
+        # GUI state
+        self.gui_root = None
+        self.gui_entry_lines = []
+        self.gui_totals_var = None
+        self.gui_date_var = None
 
     # --- Initialization and Setup ---
     
@@ -390,6 +398,54 @@ class AccountingSimulator:
         """Returns the actual positive/negative balance from GL."""
         return self.gl.get(acc, 0.0)
 
+    # --- Reporting helpers for GUI rendering ---
+
+    def get_trial_balance_rows(self):
+        rows = []
+        debit_sum, credit_sum = 0.0, 0.0
+        for acc in sorted(self.gl.keys()):
+            bal = self._calculate_real_balance(acc)
+            dr_amount = abs(bal) if bal >= 0 else 0.0
+            cr_amount = abs(bal) if bal < 0 else 0.0
+            debit_sum += dr_amount
+            credit_sum += cr_amount
+            rows.append((acc, self._get_account_type(acc), dr_amount, cr_amount))
+        return rows, debit_sum, credit_sum
+
+    def get_income_statement_summary(self):
+        revenue_lines, expense_lines = [], []
+        revenue_sum = 0.0
+        expense_sum = 0.0
+        for acc, bal in self.gl.items():
+            if self._get_account_type(acc) == "Revenue":
+                revenue_sum += abs(bal)
+                revenue_lines.append((acc, abs(bal)))
+            elif self._get_account_type(acc) == "Expense":
+                expense_sum += bal
+                expense_lines.append((acc, bal))
+        net_income = revenue_sum - expense_sum
+        return revenue_lines, expense_lines, revenue_sum, expense_sum, net_income
+
+    def get_balance_sheet_summary(self):
+        assets, liabilities, equity = defaultdict(float), defaultdict(float), defaultdict(float)
+        for acc, bal in self.gl.items():
+            acc_type = self._get_account_type(acc)
+            display_bal = abs(bal)
+            if acc_type == "Asset":
+                assets[acc] = bal
+            elif acc_type == "Contra-Asset":
+                assets[acc] = -display_bal
+            elif acc_type == "Liability":
+                liabilities[acc] = display_bal
+            elif acc_type == "Equity":
+                equity[acc] = display_bal
+        current_net_income = self._calculate_net_income()
+        equity['Current Net Income'] = current_net_income
+        total_assets = sum(assets.values())
+        total_liabilities = sum(liabilities.values())
+        total_equity = sum(equity.values())
+        return assets, liabilities, equity, total_assets, total_liabilities, total_equity
+
     def _calculate_net_income(self):
         """Helper to calculate net income for reporting."""
         revenue_sum = 0.0
@@ -642,7 +698,7 @@ class AccountingSimulator:
                 self.handle_subledger_entry(acc_name, amount, type == 'DR', entity)
 
         print("\n=== TRANSACTION POSTED SUCCESSFULLY ===")
-        self.transactions.append(entry)
+        self.transactions.append({"date": self.current_date, "lines": entry})
 
     def perform_journal_entry(self, total_transaction_amount=None):
         """Guides the user through entering a full journal entry, simplifying amount entry."""
@@ -765,8 +821,254 @@ class AccountingSimulator:
                 print(f"  INTEGRITY CHECK: OK (GL Balance matches Subledger sum of ${subledger_sum:,.2f})")
             else:
                 print(f"  INTEGRITY CHECK: FAILED! GL Balance (${abs(gl_balance):,.2f}) does NOT match Subledger sum (${subledger_sum:,.2f}).")
-        
+
         print("-" * 50)
+
+    # --- GUI: Worksheets and Financial Statements ---
+
+    def _refresh_trial_balance_view(self, tree, totals_label):
+        tree.delete(*tree.get_children())
+        rows, debit_sum, credit_sum = self.get_trial_balance_rows()
+        for acc, acc_type, dr, cr in rows:
+            tree.insert('', tk.END, values=(acc, acc_type, f"${dr:,.2f}", f"${cr:,.2f}"))
+        totals_label.config(text=f"Debits: ${debit_sum:,.2f} | Credits: ${credit_sum:,.2f}")
+
+    def _refresh_income_statement_view(self, text_widget):
+        text_widget.configure(state='normal')
+        text_widget.delete('1.0', tk.END)
+        revenue, expenses, revenue_sum, expense_sum, net = self.get_income_statement_summary()
+        text_widget.insert(tk.END, "REVENUE\n")
+        for name, amount in revenue:
+            text_widget.insert(tk.END, f"  {name:<25}${amount:,.2f}\n")
+        text_widget.insert(tk.END, f"Total Revenue: ${revenue_sum:,.2f}\n\n")
+        text_widget.insert(tk.END, "EXPENSES\n")
+        for name, amount in expenses:
+            text_widget.insert(tk.END, f"  {name:<25}${amount:,.2f}\n")
+        text_widget.insert(tk.END, f"Total Expenses: ${expense_sum:,.2f}\n")
+        text_widget.insert(tk.END, "=" * 32 + "\n")
+        text_widget.insert(tk.END, f"NET INCOME: ${net:,.2f}\n")
+        text_widget.configure(state='disabled')
+
+    def _refresh_balance_sheet_view(self, text_widget):
+        text_widget.configure(state='normal')
+        text_widget.delete('1.0', tk.END)
+        assets, liabilities, equity, total_assets, total_liabilities, total_equity = self.get_balance_sheet_summary()
+        text_widget.insert(tk.END, "ASSETS\n")
+        for acc in sorted(assets.keys()):
+            bal = assets[acc]
+            prefix = "Less: " if acc == "Accumulated Depreciation" else ""
+            text_widget.insert(tk.END, f"  {prefix}{acc:<20}${bal:,.2f}\n")
+        text_widget.insert(tk.END, f"Total Assets: ${total_assets:,.2f}\n\n")
+        text_widget.insert(tk.END, "LIABILITIES\n")
+        for acc in sorted(liabilities.keys()):
+            text_widget.insert(tk.END, f"  {acc:<20}${liabilities[acc]:,.2f}\n")
+        text_widget.insert(tk.END, f"Total Liabilities: ${total_liabilities:,.2f}\n\n")
+        text_widget.insert(tk.END, "EQUITY\n")
+        for acc in sorted(equity.keys()):
+            text_widget.insert(tk.END, f"  {acc:<20}${equity[acc]:,.2f}\n")
+        text_widget.insert(tk.END, f"Total Equity: ${total_equity:,.2f}\n")
+        text_widget.insert(tk.END, "=" * 32 + "\n")
+        text_widget.insert(tk.END, f"Assets vs. L+E Diff: ${(total_assets - (total_liabilities + total_equity)) :,.2f}\n")
+        text_widget.configure(state='disabled')
+
+    def _refresh_subledger_view(self, text_widget):
+        text_widget.configure(state='normal')
+        text_widget.delete('1.0', tk.END)
+        for control_acc, entities in self.subledgers.items():
+            gl_balance = self.gl[control_acc]
+            subledger_sum = sum(entities.values())
+            text_widget.insert(tk.END, f"{control_acc} (GL: ${abs(gl_balance):,.2f})\n")
+            if entities:
+                for name, bal in entities.items():
+                    text_widget.insert(tk.END, f"  {name:<20}${bal:,.2f}\n")
+            else:
+                text_widget.insert(tk.END, "  (No open balances)\n")
+            status = "OK" if abs(abs(gl_balance) - subledger_sum) < 0.01 else "OUT OF BALANCE"
+            text_widget.insert(tk.END, f"  Integrity: {status}\n\n")
+        text_widget.configure(state='disabled')
+
+    def _refresh_journal_log(self, tree):
+        tree.delete(*tree.get_children())
+        for entry in self.transactions:
+            entry_date = entry.get("date")
+            for acc, amount, direction, entity in entry.get("lines", []):
+                tree.insert('', tk.END, values=(entry_date.strftime('%b %d'), direction, acc, entity or "-", f"${amount:,.2f}"))
+
+    def _add_gui_line(self, account_var, amount_var, type_var, entity_var, listbox):
+        try:
+            amount = float(amount_var.get())
+        except ValueError:
+            messagebox.showerror("Amount Error", "Please enter a numeric amount.")
+            return
+        acc_name = account_var.get()
+        if not acc_name:
+            messagebox.showerror("Account Error", "Choose an account before adding.")
+            return
+        if acc_name in self.subledgers and not entity_var.get().strip():
+            messagebox.showerror("Subledger Required", "Enter a customer/vendor for this control account.")
+            return
+        direction = 'DR' if type_var.get() == 'Debit' else 'CR'
+        line = (acc_name, amount, direction, entity_var.get().strip() or None)
+        self.gui_entry_lines.append(line)
+        listbox.insert(tk.END, f"{direction} {acc_name} ${amount:,.2f} ({entity_var.get().strip() or '—'})")
+        self._update_gui_totals()
+
+    def _update_gui_totals(self):
+        debit = sum(amount for acc, amount, drcr, _ in self.gui_entry_lines if drcr == 'DR')
+        credit = sum(amount for acc, amount, drcr, _ in self.gui_entry_lines if drcr == 'CR')
+        if self.gui_totals_var:
+            self.gui_totals_var.set(f"Debits ${debit:,.2f} | Credits ${credit:,.2f}")
+
+    def _post_gui_entry(self, listbox, refreshers):
+        debit = sum(amount for _, amount, drcr, _ in self.gui_entry_lines if drcr == 'DR')
+        credit = sum(amount for _, amount, drcr, _ in self.gui_entry_lines if drcr == 'CR')
+        if abs(debit - credit) > 0.01:
+            messagebox.showerror("Entry Not Balanced", "Debits and credits must match before posting.")
+            return
+        if not self.gui_entry_lines:
+            messagebox.showwarning("No Lines", "Add at least one line before posting.")
+            return
+        self.apply_journal_entry(self.gui_entry_lines)
+        self.gui_entry_lines = []
+        listbox.delete(0, tk.END)
+        self._update_gui_totals()
+        for cb in refreshers:
+            cb()
+        messagebox.showinfo("Posted", "Entry posted to the ledger.")
+
+    def _advance_gui_day(self, date_label, story_box, scenario_box):
+        intro = self._build_daily_intro()
+        scenarios = self._generate_daily_scenario()
+        scenario_text = "\n".join([f"- {text}" for text, _ in scenarios])
+        story_box.configure(state='normal')
+        story_box.delete('1.0', tk.END)
+        story_box.insert(tk.END, intro)
+        story_box.configure(state='disabled')
+        scenario_box.configure(state='normal')
+        scenario_box.delete('1.0', tk.END)
+        scenario_box.insert(tk.END, scenario_text or "No scenarios today.")
+        scenario_box.configure(state='disabled')
+        self.advance_day()
+        if self.gui_date_var:
+            self.gui_date_var.set(self.current_date.strftime('%A, %B %d, %Y'))
+        date_label.config(text=self.gui_date_var.get())
+
+    def launch_gui(self):
+        self.gui_root = tk.Tk()
+        self.gui_root.title("1955 Accounting Simulator — Worksheets & Statements")
+        self.gui_root.geometry("960x720")
+        self.gui_date_var = tk.StringVar(value=self.current_date.strftime('%A, %B %d, %Y'))
+        header = ttk.Frame(self.gui_root)
+        header.pack(fill='x', pady=6)
+        ttk.Label(header, text=f"Business: {self.business_type}", font=('TkDefaultFont', 12, 'bold')).pack(side='left', padx=10)
+        ttk.Label(header, textvariable=self.gui_date_var, font=('TkDefaultFont', 11)).pack(side='right', padx=10)
+
+        notebook = ttk.Notebook(self.gui_root)
+        notebook.pack(fill='both', expand=True)
+
+        # Daily story tab
+        story_tab = ttk.Frame(notebook)
+        notebook.add(story_tab, text="Daily Story")
+        ttk.Label(story_tab, text="Narrated Workday", font=('TkDefaultFont', 11, 'bold')).pack(anchor='w', padx=10, pady=(10, 4))
+        story_box = tk.Text(story_tab, height=8, wrap='word')
+        story_box.pack(fill='x', padx=10)
+        ttk.Label(story_tab, text="Scenarios", font=('TkDefaultFont', 11, 'bold')).pack(anchor='w', padx=10, pady=(10, 4))
+        scenario_box = tk.Text(story_tab, height=10, wrap='word')
+        scenario_box.pack(fill='both', padx=10, pady=(0, 8), expand=True)
+        advance_btn = ttk.Button(story_tab, text="Generate Workday & Advance", command=lambda: self._advance_gui_day(date_label, story_box, scenario_box))
+        advance_btn.pack(pady=6)
+
+        # Journal entry tab
+        entry_tab = ttk.Frame(notebook)
+        notebook.add(entry_tab, text="Journal Entry")
+        form = ttk.Frame(entry_tab)
+        form.pack(fill='x', padx=10, pady=8)
+        ttk.Label(form, text="Account").grid(row=0, column=0, sticky='w')
+        account_var = tk.StringVar(value="Cash")
+        account_combo = ttk.Combobox(form, textvariable=account_var, values=sorted(self.gl.keys()), state='readonly')
+        account_combo.grid(row=1, column=0, padx=4, sticky='ew')
+        ttk.Label(form, text="Amount").grid(row=0, column=1, sticky='w')
+        amount_var = tk.StringVar()
+        ttk.Entry(form, textvariable=amount_var).grid(row=1, column=1, padx=4, sticky='ew')
+        ttk.Label(form, text="Type").grid(row=0, column=2, sticky='w')
+        type_var = tk.StringVar(value='Debit')
+        ttk.Radiobutton(form, text='Debit', variable=type_var, value='Debit').grid(row=1, column=2, sticky='w')
+        ttk.Radiobutton(form, text='Credit', variable=type_var, value='Credit').grid(row=1, column=3, sticky='w')
+        ttk.Label(form, text="Customer/Vendor").grid(row=0, column=4, sticky='w')
+        entity_var = tk.StringVar()
+        ttk.Entry(form, textvariable=entity_var).grid(row=1, column=4, padx=4, sticky='ew')
+        form.columnconfigure(0, weight=2)
+        form.columnconfigure(1, weight=1)
+        form.columnconfigure(4, weight=2)
+
+        listbox = tk.Listbox(entry_tab, height=8)
+        listbox.pack(fill='both', padx=10, pady=6, expand=True)
+        self.gui_totals_var = tk.StringVar(value="Debits $0.00 | Credits $0.00")
+        ttk.Label(entry_tab, textvariable=self.gui_totals_var).pack(anchor='w', padx=10)
+
+        buttons = ttk.Frame(entry_tab)
+        buttons.pack(pady=6)
+        ttk.Button(buttons, text="Add Line", command=lambda: self._add_gui_line(account_var, amount_var, type_var, entity_var, listbox)).pack(side='left', padx=4)
+        ttk.Button(buttons, text="Clear", command=lambda: [listbox.delete(0, tk.END), self.gui_entry_lines.clear(), self._update_gui_totals()]).pack(side='left', padx=4)
+
+        # Ledger tab
+        ledger_tab = ttk.Frame(notebook)
+        notebook.add(ledger_tab, text="Trial Balance")
+        ledger_tree = ttk.Treeview(ledger_tab, columns=("Account", "Type", "Debit", "Credit"), show='headings')
+        for col in ("Account", "Type", "Debit", "Credit"):
+            ledger_tree.heading(col, text=col)
+            ledger_tree.column(col, stretch=True, width=120)
+        ledger_tree.pack(fill='both', expand=True, padx=10, pady=6)
+        totals_label = ttk.Label(ledger_tab, text="")
+        totals_label.pack(anchor='w', padx=10)
+
+        # Income statement
+        income_tab = ttk.Frame(notebook)
+        notebook.add(income_tab, text="Income Statement")
+        income_text = tk.Text(income_tab, wrap='word')
+        income_text.pack(fill='both', expand=True, padx=10, pady=6)
+
+        # Balance sheet
+        bs_tab = ttk.Frame(notebook)
+        notebook.add(bs_tab, text="Balance Sheet")
+        bs_text = tk.Text(bs_tab, wrap='word')
+        bs_text.pack(fill='both', expand=True, padx=10, pady=6)
+
+        # Subledger tab
+        sub_tab = ttk.Frame(notebook)
+        notebook.add(sub_tab, text="Subledgers")
+        sub_text = tk.Text(sub_tab, wrap='word')
+        sub_text.pack(fill='both', expand=True, padx=10, pady=6)
+
+        # Journal log tab
+        log_tab = ttk.Frame(notebook)
+        notebook.add(log_tab, text="Worksheets")
+        log_tree = ttk.Treeview(log_tab, columns=("Date", "DR/CR", "Account", "Party", "Amount"), show='headings')
+        for col in ("Date", "DR/CR", "Account", "Party", "Amount"):
+            log_tree.heading(col, text=col)
+            log_tree.column(col, stretch=True, width=110)
+        log_tree.pack(fill='both', expand=True, padx=10, pady=6)
+
+        refresh_callbacks = [
+            lambda: self._refresh_trial_balance_view(ledger_tree, totals_label),
+            lambda: self._refresh_income_statement_view(income_text),
+            lambda: self._refresh_balance_sheet_view(bs_text),
+            lambda: self._refresh_subledger_view(sub_text),
+            lambda: self._refresh_journal_log(log_tree),
+        ]
+
+        ttk.Button(buttons, text="Post Entry", command=lambda: self._post_gui_entry(listbox, refresh_callbacks)).pack(side='left', padx=4)
+
+        self._refresh_trial_balance_view(ledger_tree, totals_label)
+        self._refresh_income_statement_view(income_text)
+        self._refresh_balance_sheet_view(bs_text)
+        self._refresh_subledger_view(sub_text)
+        self._refresh_journal_log(log_tree)
+
+        date_label = ttk.Label(story_tab, text=self.gui_date_var.get())
+        date_label.pack(pady=(4, 0))
+
+        self.gui_root.mainloop()
 
     # --- Main Menu ---
 
@@ -799,7 +1101,12 @@ class AccountingSimulator:
                 print("Invalid choice.")
 
         self._setup_ai_adapter()
-        self.main_menu()
+        use_gui = input("Open the worksheet GUI? (y/N): ").strip().lower() == 'y'
+        if use_gui:
+            print("Launching GUI... close the window to quit.")
+            self.launch_gui()
+        else:
+            self.main_menu()
 
     def main_menu(self):
         """The main interactive loop for the simulator."""
