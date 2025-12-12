@@ -28,6 +28,14 @@ class AccountingSimulator:
         self.story_index = 0
         self.monthly_bills = self._load_monthly_bills()
 
+        self.sensory_details = [
+            "The typewriter keys stick ever so slightly, leaving faint smudges on your fingertips.",
+            "A ceiling fan hums overhead, pushing the scent of ledger ink through the room.",
+            "You catch a snippet of a radio ad about war bonds before someone fiddles with the dial.",
+            "Coffee percolates in the corner, its burble mingling with the rustle of paper.",
+            "Sunlight slants across the desk, pooling over the neat stacks of invoices."
+        ]
+
         # Recurring bill tracker to prevent implausible repeats
         self.last_bill_months = {}
 
@@ -38,15 +46,15 @@ class AccountingSimulator:
         return {
             "SERVICE": {
                 "name": "Mr. Sterling",
-                "dialogue": "Mr. Sterling, the proprietor of Sterling Consults, nods: 'Ah, Bookkeeper, I've got a batch of invoices here that need tabulating. Keep that ledger pristine.'"
+                "dialogue": "Mr. Sterling, proprietor of Sterling Consults, nods toward the ledger: 'You're the steady hand here. These invoices are the bones of our story—keep them upright, and the courthouse will trust us.'"
             },
             "RETAIL": {
                 "name": "Mrs. Gable",
-                "dialogue": "Mrs. Gable from Gable's Groceries beams: 'The market was busy this morning! Can you make sure these receipts and vendor slips get logged before the afternoon rush?'"
+                "dialogue": "Mrs. Gable beams from behind the counter: 'The morning rush left more stories than change. Put every slip in its place so we remember who trusted us today.'"
             },
             "MANUFACTURING": {
                 "name": "Mr. Thorne",
-                "dialogue": "Mr. Thorne, the owner of Thorne Fabrication, hands you a clip-board: 'We had a raw material delivery this morning. Get this noted, and check the payroll slips for the factory workers.'"
+                "dialogue": "Mr. Thorne, owner of Thorne Fabrication, hands you a clipboard: 'Steel and sweat fill this shop, but the ledger keeps the rhythm. Mark what arrived, what left, and who earned their pay.'"
             }
         }
 
@@ -54,24 +62,53 @@ class AccountingSimulator:
         """Creates a simple serialized storyline for each business type."""
         return {
             "SERVICE": [
-                "A new contract with the county courthouse is in the works; the clerks keep calling for invoice copies.",
-                "Mr. Sterling mentions a rival firm opening nearby. He wants pristine books to woo nervous clients.",
-                "An old radio in the office plays swing tunes as you tally hours; the mood eases during the rush.",
-                "A junior consultant asks if expense reports can be summarized—you're the steadying hand in the chaos.",
-                "Rumor has it a magazine is profiling local businesses. Sterling insists the ledgers shine."],
+                "Sterling has you sorting copies for the county courthouse contract. Clerks pop their heads in with nervous smiles, grateful someone is minding the records.",
+                "A rival firm opens down the block. Sterling taps the window with his pencil, insisting the cleanest books will win clients over.",
+                "Swing music pours out of a tinny radio while you tally hours. The beat steadies your hand as couriers drop envelopes on your desk.",
+                "A junior consultant asks you to weave expense reports into one tidy summary. You're the calm narrator to their frantic footnotes.",
+                "Word reaches the office that a magazine may profile local firms. Sterling straightens his tie and trusts you to keep the story in the numbers."],
             "RETAIL": [
-                "Mrs. Gable is prepping a mid-summer picnic display; vendors drop by with samples and gossip.",
-                "A local family starts a tab for the week. You keep a careful eye on their receivable balance.",
-                "Delivery boys race in with crates; the ringing cash register creates a lively soundtrack.",
-                "A traveling salesman offers a discount on canned peaches, if you note the early payment terms.",
-                "Mrs. Gable plans a harvest festival sale—she wants the books tidy before the posters go up."],
+                "Mrs. Gable sketches a midsummer picnic display on butcher paper. Vendors arrive with gossip and samples, trusting you'll remember every handshake promise.",
+                "The Rossi family starts a tab until Friday's pay. You track each receipt, the ledger turning into a quiet record of neighborhood trust.",
+                "Delivery boys race in with crates, breathless. The cash register rings like a bell tower, announcing the town's appetite.",
+                "A traveling salesman offers a discount on canned peaches—if you note his early payment terms. Gable gives you a wink as you pencil the detail in.",
+                "Posters for the harvest festival pile up in the back room. Mrs. Gable wants spotless books before the crowds descend."],
             "MANUFACTURING": [
-                "Mr. Thorne lands a navy-adjacent contract and needs spotless records for inspectors.",
-                "The factory whistle blows at dawn; you review payroll slips while the presses warm up.",
-                "A visiting engineer asks about job costing—your ledgers guide the conversation.",
-                "Steel shipments arrive by rail, and the foreman shouts for invoices before unloading.",
-                "An efficiency expert strolls through the floor. Thorne wants every expense defended."],
+                "Thorne celebrates a navy-adjacent contract and lays blueprints across your desk. Inspectors may visit, and every number must tell a steady story.",
+                "The factory whistle cracks the morning. While presses warm, you smooth payroll slips with inky fingers and gather signatures.",
+                "A visiting engineer asks how job costs stack across batches. You turn the ledger toward him, the columns as orderly as parade drills.",
+                "Steel clatters off rail cars. The foreman shouts over the din for invoices; you anchor the chaos with neat entries.",
+                "An efficiency expert strolls the floor with a stopwatch. Thorne leans in and whispers that the books will defend every expense."],
         }
+
+    def _build_daily_intro(self):
+        """Constructs a narrative opening for the day."""
+        detail = random.choice(self.sensory_details)
+        beat = self.story_beats[self.business_type][self.story_index % len(self.story_beats[self.business_type])]
+        owner = self.business_owner
+
+        lines = [
+            f"Morning, {owner['name']} steps into the doorway with a knowing smile.",
+            owner['dialogue'],
+            beat,
+            detail,
+            "You take a steadying breath, ready to translate the day's stories into ink and columns."
+        ]
+
+        self.story_index += 1
+        return "\n".join(lines)
+
+    def _lead_into_event(self, idx, total):
+        """Provides a short story transition for each business event."""
+        transitions = [
+            "You flip to a fresh line in the journal.",
+            "The desk lamp halos the page as you ready your pencil.",
+            "A breeze from the open window stirs the papers, reminding you to keep pace.",
+            "You sip the last of the coffee and nod to the next task.",
+            "In the hallway, footsteps fade—leaving you with the numbers."
+        ]
+        lead = random.choice(transitions)
+        return f"Scene {idx}/{total} — {lead}"
 
     def _load_templates(self):
         """Defines the pool of transaction building blocks with 1950s flavor."""
@@ -441,33 +478,30 @@ class AccountingSimulator:
         
     def run_daily_scenario(self):
         """Handles the daily interaction loop."""
-        
+
         if self.advance_day(): # Advance and check for end of year
-            sys.exit() 
-            
+            sys.exit()
+
         scenarios_with_suggestions = self._generate_daily_scenario()
-        
+
         print("\n" + "#" * 70)
         print(f"DAILY TRANSACTIONS FOR: {self.current_date.strftime('%A, %B %d, %Y')}")
         print("#" * 70)
-        print(f"[Interaction] Your boss, {self.business_owner['name']}, has arrived.")
-        print(f"[Dialogue] {self.business_owner['dialogue']}")
-        beat = self.story_beats[self.business_type][self.story_index % len(self.story_beats[self.business_type])]
-        print(f"[Story Beat] {beat}")
-        self.story_index += 1
+        print(self._build_daily_intro())
         print("-" * 70)
 
         for i, (scenario, suggested_debit) in enumerate(scenarios_with_suggestions):
-            
+
             # --- MODIFICATION: Extract Amount and Remove Hint ---
             transaction_amount = self._parse_amount_from_scenario(scenario)
-            
-            print(f"\nBUSINESS EVENT {i + 1}/{len(scenarios_with_suggestions)}: {scenario}")
-            # Hint removed as requested
-            print(f"Required Action: Enter the journal entry.")
-            
+
+            lead_in = self._lead_into_event(i + 1, len(scenarios_with_suggestions))
+            print(f"\n{lead_in}")
+            print(f"Event: {scenario}")
+            print("Prompt: Capture the journal entry that preserves this moment in the books.")
+
             # Pass the extracted amount to the entry system
-            self.perform_journal_entry(transaction_amount) 
+            self.perform_journal_entry(transaction_amount)
             self.transactions_today += 1
             
         print("\n" + "=" * 70)
