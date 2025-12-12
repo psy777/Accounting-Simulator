@@ -829,46 +829,70 @@ class AccountingSimulator:
     def _refresh_trial_balance_view(self, tree, totals_label):
         tree.delete(*tree.get_children())
         rows, debit_sum, credit_sum = self.get_trial_balance_rows()
-        for acc, acc_type, dr, cr in rows:
-            tree.insert('', tk.END, values=(acc, acc_type, f"${dr:,.2f}", f"${cr:,.2f}"))
+        for idx, (acc, acc_type, dr, cr) in enumerate(rows):
+            tag = 'evenrow' if idx % 2 == 0 else 'oddrow'
+            tree.insert('', tk.END, values=(acc, acc_type, f"${dr:,.2f}", f"${cr:,.2f}"), tags=(tag,))
         totals_label.config(text=f"Debits: ${debit_sum:,.2f} | Credits: ${credit_sum:,.2f}")
 
     def _refresh_income_statement_view(self, text_widget):
         text_widget.configure(state='normal')
         text_widget.delete('1.0', tk.END)
         revenue, expenses, revenue_sum, expense_sum, net = self.get_income_statement_summary()
-        text_widget.insert(tk.END, "REVENUE\n")
+        lines = [
+            self.business_owner['name'].center(64),
+            "INCOME STATEMENT".center(64),
+            f"For the period ending {self.current_date.strftime('%B %d, %Y')}".center(64),
+            "",
+            "REVENUE",
+        ]
         for name, amount in revenue:
-            text_widget.insert(tk.END, f"  {name:<25}${amount:,.2f}\n")
-        text_widget.insert(tk.END, f"Total Revenue: ${revenue_sum:,.2f}\n\n")
-        text_widget.insert(tk.END, "EXPENSES\n")
+            lines.append(f"  {name:<40}${amount:>14,.2f}")
+        lines.append("  " + "-" * 54)
+        lines.append(f"  Total Revenue: ${revenue_sum:>33,.2f}")
+        lines.append("")
+        lines.append("EXPENSES")
         for name, amount in expenses:
-            text_widget.insert(tk.END, f"  {name:<25}${amount:,.2f}\n")
-        text_widget.insert(tk.END, f"Total Expenses: ${expense_sum:,.2f}\n")
-        text_widget.insert(tk.END, "=" * 32 + "\n")
-        text_widget.insert(tk.END, f"NET INCOME: ${net:,.2f}\n")
+            lines.append(f"  {name:<40}${amount:>14,.2f}")
+        lines.append("  " + "-" * 54)
+        lines.append(f"  Total Expenses: ${expense_sum:>31,.2f}")
+        lines.append("=" * 60)
+        lines.append(f"  NET INCOME: ${net:>34,.2f}")
+        text_widget.insert(tk.END, "\n".join(lines))
         text_widget.configure(state='disabled')
 
     def _refresh_balance_sheet_view(self, text_widget):
         text_widget.configure(state='normal')
         text_widget.delete('1.0', tk.END)
         assets, liabilities, equity, total_assets, total_liabilities, total_equity = self.get_balance_sheet_summary()
-        text_widget.insert(tk.END, "ASSETS\n")
+        heading = [
+            self.business_owner['name'].center(64),
+            "BALANCE SHEET".center(64),
+            f"As of {self.current_date.strftime('%B %d, %Y')}".center(64),
+            "",
+            "ASSETS",
+        ]
+        lines = heading.copy()
         for acc in sorted(assets.keys()):
             bal = assets[acc]
             prefix = "Less: " if acc == "Accumulated Depreciation" else ""
-            text_widget.insert(tk.END, f"  {prefix}{acc:<20}${bal:,.2f}\n")
-        text_widget.insert(tk.END, f"Total Assets: ${total_assets:,.2f}\n\n")
-        text_widget.insert(tk.END, "LIABILITIES\n")
+            lines.append(f"  {prefix}{acc:<36}${bal:>14,.2f}")
+        lines.append("  " + "-" * 54)
+        lines.append(f"  Total Assets: ${total_assets:>33,.2f}")
+        lines.append("")
+        lines.append("LIABILITIES")
         for acc in sorted(liabilities.keys()):
-            text_widget.insert(tk.END, f"  {acc:<20}${liabilities[acc]:,.2f}\n")
-        text_widget.insert(tk.END, f"Total Liabilities: ${total_liabilities:,.2f}\n\n")
-        text_widget.insert(tk.END, "EQUITY\n")
+            lines.append(f"  {acc:<36}${liabilities[acc]:>14,.2f}")
+        lines.append("  " + "-" * 54)
+        lines.append(f"  Total Liabilities: ${total_liabilities:>26,.2f}")
+        lines.append("")
+        lines.append("EQUITY")
         for acc in sorted(equity.keys()):
-            text_widget.insert(tk.END, f"  {acc:<20}${equity[acc]:,.2f}\n")
-        text_widget.insert(tk.END, f"Total Equity: ${total_equity:,.2f}\n")
-        text_widget.insert(tk.END, "=" * 32 + "\n")
-        text_widget.insert(tk.END, f"Assets vs. L+E Diff: ${(total_assets - (total_liabilities + total_equity)) :,.2f}\n")
+            lines.append(f"  {acc:<36}${equity[acc]:>14,.2f}")
+        lines.append("  " + "-" * 54)
+        lines.append(f"  Total Equity: ${total_equity:>31,.2f}")
+        lines.append("=" * 60)
+        lines.append(f"  Assets – (L + E) difference: ${(total_assets - (total_liabilities + total_equity)):>11,.2f}")
+        text_widget.insert(tk.END, "\n".join(lines))
         text_widget.configure(state='disabled')
 
     def _refresh_subledger_view(self, text_widget):
@@ -878,21 +902,26 @@ class AccountingSimulator:
             gl_balance = self.gl[control_acc]
             subledger_sum = sum(entities.values())
             text_widget.insert(tk.END, f"{control_acc} (GL: ${abs(gl_balance):,.2f})\n")
+            text_widget.insert(tk.END, "  " + "-" * 48 + "\n")
             if entities:
                 for name, bal in entities.items():
-                    text_widget.insert(tk.END, f"  {name:<20}${bal:,.2f}\n")
+                    text_widget.insert(tk.END, f"  {name:<32}${bal:>12,.2f}\n")
             else:
                 text_widget.insert(tk.END, "  (No open balances)\n")
             status = "OK" if abs(abs(gl_balance) - subledger_sum) < 0.01 else "OUT OF BALANCE"
+            text_widget.insert(tk.END, f"  Total by subledger: ${subledger_sum:,.2f}\n")
             text_widget.insert(tk.END, f"  Integrity: {status}\n\n")
         text_widget.configure(state='disabled')
 
     def _refresh_journal_log(self, tree):
         tree.delete(*tree.get_children())
+        row_idx = 0
         for entry in self.transactions:
             entry_date = entry.get("date")
             for acc, amount, direction, entity in entry.get("lines", []):
-                tree.insert('', tk.END, values=(entry_date.strftime('%b %d'), direction, acc, entity or "-", f"${amount:,.2f}"))
+                tag = 'evenrow' if row_idx % 2 == 0 else 'oddrow'
+                tree.insert('', tk.END, values=(entry_date.strftime('%b %d'), direction, acc, entity or "-", f"${amount:,.2f}"), tags=(tag,))
+                row_idx += 1
 
     def _add_gui_line(self, account_var, amount_var, type_var, entity_var, listbox):
         try:
@@ -957,6 +986,15 @@ class AccountingSimulator:
         self.gui_root = tk.Tk()
         self.gui_root.title("1955 Accounting Simulator — Worksheets & Statements")
         self.gui_root.geometry("960x720")
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('Sheet.TFrame', background='#fdfaf3', borderwidth=1, relief='groove')
+        style.configure('Sheet.TLabel', background='#fdfaf3', font=('Helvetica', 11, 'bold'))
+        style.configure('SheetText.TLabel', background='#fdfaf3', font=('Helvetica', 10))
+        style.configure('Ledger.Treeview', font=('Courier New', 10))
+        style.configure('Ledger.Treeview.Heading', font=('Helvetica', 10, 'bold'))
+        style.map('Ledger.Treeview', background=[('selected', '#d9ead3')])
+        style.configure('Accent.TButton', font=('Helvetica', 10, 'bold'))
         self.gui_date_var = tk.StringVar(value=self.current_date.strftime('%A, %B %d, %Y'))
         header = ttk.Frame(self.gui_root)
         header.pack(fill='x', pady=6)
@@ -967,19 +1005,19 @@ class AccountingSimulator:
         notebook.pack(fill='both', expand=True)
 
         # Daily story tab
-        story_tab = ttk.Frame(notebook)
+        story_tab = ttk.Frame(notebook, style='Sheet.TFrame')
         notebook.add(story_tab, text="Daily Story")
-        ttk.Label(story_tab, text="Narrated Workday", font=('TkDefaultFont', 11, 'bold')).pack(anchor='w', padx=10, pady=(10, 4))
-        story_box = tk.Text(story_tab, height=8, wrap='word')
+        ttk.Label(story_tab, text="Narrated Workday", style='Sheet.TLabel').pack(anchor='w', padx=10, pady=(12, 4))
+        story_box = tk.Text(story_tab, height=8, wrap='word', font=('Courier New', 11), background='#fffdf7', relief='solid', borderwidth=1)
         story_box.pack(fill='x', padx=10)
-        ttk.Label(story_tab, text="Scenarios", font=('TkDefaultFont', 11, 'bold')).pack(anchor='w', padx=10, pady=(10, 4))
-        scenario_box = tk.Text(story_tab, height=10, wrap='word')
+        ttk.Label(story_tab, text="Scenario Notes", style='Sheet.TLabel').pack(anchor='w', padx=10, pady=(10, 4))
+        scenario_box = tk.Text(story_tab, height=10, wrap='word', font=('Courier New', 11), background='#fffdf7', relief='solid', borderwidth=1)
         scenario_box.pack(fill='both', padx=10, pady=(0, 8), expand=True)
-        advance_btn = ttk.Button(story_tab, text="Generate Workday & Advance", command=lambda: self._advance_gui_day(date_label, story_box, scenario_box))
+        advance_btn = ttk.Button(story_tab, text="Generate Workday & Advance", style='Accent.TButton', command=lambda: self._advance_gui_day(date_label, story_box, scenario_box))
         advance_btn.pack(pady=6)
 
         # Journal entry tab
-        entry_tab = ttk.Frame(notebook)
+        entry_tab = ttk.Frame(notebook, style='Sheet.TFrame')
         notebook.add(entry_tab, text="Journal Entry")
         form = ttk.Frame(entry_tab)
         form.pack(fill='x', padx=10, pady=8)
@@ -1001,53 +1039,63 @@ class AccountingSimulator:
         form.columnconfigure(1, weight=1)
         form.columnconfigure(4, weight=2)
 
-        listbox = tk.Listbox(entry_tab, height=8)
-        listbox.pack(fill='both', padx=10, pady=6, expand=True)
+        listbox_frame = ttk.Frame(entry_tab, style='Sheet.TFrame')
+        listbox_frame.pack(fill='both', padx=10, pady=6, expand=True)
+        listbox = tk.Listbox(listbox_frame, height=8, font=('Courier New', 11), background='#fffdf7', relief='solid', borderwidth=1)
+        listbox.pack(fill='both', expand=True, padx=6, pady=6)
         self.gui_totals_var = tk.StringVar(value="Debits $0.00 | Credits $0.00")
-        ttk.Label(entry_tab, textvariable=self.gui_totals_var).pack(anchor='w', padx=10)
+        ttk.Label(entry_tab, textvariable=self.gui_totals_var, style='SheetText.TLabel').pack(anchor='w', padx=16)
 
         buttons = ttk.Frame(entry_tab)
         buttons.pack(pady=6)
-        ttk.Button(buttons, text="Add Line", command=lambda: self._add_gui_line(account_var, amount_var, type_var, entity_var, listbox)).pack(side='left', padx=4)
+        ttk.Button(buttons, text="Add Line", style='Accent.TButton', command=lambda: self._add_gui_line(account_var, amount_var, type_var, entity_var, listbox)).pack(side='left', padx=4)
         ttk.Button(buttons, text="Clear", command=lambda: [listbox.delete(0, tk.END), self.gui_entry_lines.clear(), self._update_gui_totals()]).pack(side='left', padx=4)
 
         # Ledger tab
-        ledger_tab = ttk.Frame(notebook)
+        ledger_tab = ttk.Frame(notebook, style='Sheet.TFrame')
         notebook.add(ledger_tab, text="Trial Balance")
-        ledger_tree = ttk.Treeview(ledger_tab, columns=("Account", "Type", "Debit", "Credit"), show='headings')
-        for col in ("Account", "Type", "Debit", "Credit"):
-            ledger_tree.heading(col, text=col)
-            ledger_tree.column(col, stretch=True, width=120)
+        ledger_header = ttk.Label(ledger_tab, text="Trial Balance", style='Sheet.TLabel')
+        ledger_header.pack(anchor='center', pady=(10, 2))
+        ledger_tree = ttk.Treeview(ledger_tab, columns=("Account", "Type", "Debit", "Credit"), show='headings', style='Ledger.Treeview')
+        for col, anchor in (("Account", 'w'), ("Type", 'w'), ("Debit", 'e'), ("Credit", 'e')):
+            ledger_tree.heading(col, text=col, anchor=anchor)
+            ledger_tree.column(col, stretch=True, width=160 if col == "Account" else 110, anchor=anchor)
+        ledger_tree.tag_configure('evenrow', background='#f0ece4')
+        ledger_tree.tag_configure('oddrow', background='#fffdf7')
         ledger_tree.pack(fill='both', expand=True, padx=10, pady=6)
-        totals_label = ttk.Label(ledger_tab, text="")
-        totals_label.pack(anchor='w', padx=10)
+        totals_label = ttk.Label(ledger_tab, text="", style='SheetText.TLabel')
+        totals_label.pack(anchor='e', padx=12, pady=(0, 4))
 
         # Income statement
-        income_tab = ttk.Frame(notebook)
+        income_tab = ttk.Frame(notebook, style='Sheet.TFrame')
         notebook.add(income_tab, text="Income Statement")
-        income_text = tk.Text(income_tab, wrap='word')
-        income_text.pack(fill='both', expand=True, padx=10, pady=6)
+        income_text = tk.Text(income_tab, wrap='word', font=('Courier New', 11), background='#fffdf7', relief='solid', borderwidth=1)
+        income_text.pack(fill='both', expand=True, padx=10, pady=12)
 
         # Balance sheet
-        bs_tab = ttk.Frame(notebook)
+        bs_tab = ttk.Frame(notebook, style='Sheet.TFrame')
         notebook.add(bs_tab, text="Balance Sheet")
-        bs_text = tk.Text(bs_tab, wrap='word')
-        bs_text.pack(fill='both', expand=True, padx=10, pady=6)
+        bs_text = tk.Text(bs_tab, wrap='word', font=('Courier New', 11), background='#fffdf7', relief='solid', borderwidth=1)
+        bs_text.pack(fill='both', expand=True, padx=10, pady=12)
 
         # Subledger tab
-        sub_tab = ttk.Frame(notebook)
+        sub_tab = ttk.Frame(notebook, style='Sheet.TFrame')
         notebook.add(sub_tab, text="Subledgers")
-        sub_text = tk.Text(sub_tab, wrap='word')
-        sub_text.pack(fill='both', expand=True, padx=10, pady=6)
+        sub_text = tk.Text(sub_tab, wrap='word', font=('Courier New', 11), background='#fffdf7', relief='solid', borderwidth=1)
+        sub_text.pack(fill='both', expand=True, padx=10, pady=12)
 
         # Journal log tab
-        log_tab = ttk.Frame(notebook)
+        log_tab = ttk.Frame(notebook, style='Sheet.TFrame')
         notebook.add(log_tab, text="Worksheets")
-        log_tree = ttk.Treeview(log_tab, columns=("Date", "DR/CR", "Account", "Party", "Amount"), show='headings')
-        for col in ("Date", "DR/CR", "Account", "Party", "Amount"):
-            log_tree.heading(col, text=col)
-            log_tree.column(col, stretch=True, width=110)
-        log_tree.pack(fill='both', expand=True, padx=10, pady=6)
+        ttk.Label(log_tab, text="Posted Journal Entries", style='Sheet.TLabel').pack(anchor='center', pady=(10, 4))
+        log_tree = ttk.Treeview(log_tab, columns=("Date", "DR/CR", "Account", "Party", "Amount"), show='headings', style='Ledger.Treeview')
+        for col, anchor in (("Date", 'w'), ("DR/CR", 'center'), ("Account", 'w'), ("Party", 'w'), ("Amount", 'e')):
+            log_tree.heading(col, text=col, anchor=anchor)
+            width = 80 if col in ("Date", "DR/CR") else 200 if col == "Account" else 140
+            log_tree.column(col, stretch=True, width=width, anchor=anchor)
+        log_tree.tag_configure('evenrow', background='#f0ece4')
+        log_tree.tag_configure('oddrow', background='#fffdf7')
+        log_tree.pack(fill='both', expand=True, padx=10, pady=8)
 
         refresh_callbacks = [
             lambda: self._refresh_trial_balance_view(ledger_tree, totals_label),
