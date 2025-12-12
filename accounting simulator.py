@@ -3,6 +3,7 @@ import sys
 import re
 from collections import defaultdict
 from datetime import date, timedelta
+import requests
 
 class AccountingSimulator:
     """
@@ -38,6 +39,11 @@ class AccountingSimulator:
 
         # Recurring bill tracker to prevent implausible repeats
         self.last_bill_months = {}
+
+        # Optional Ollama hookup for live narrative generation
+        self.use_ollama = False
+        self.ollama_model = "llama3"
+        self.ollama_url = "http://localhost:11434"
 
     # --- Initialization and Setup ---
     
@@ -81,6 +87,52 @@ class AccountingSimulator:
                 "An efficiency expert strolls the floor with a stopwatch. Thorne leans in and whispers that the books will defend every expense."],
         }
 
+    def _setup_ai_adapter(self):
+        """Optional Ollama hookup to enrich narration with local LLM output."""
+        choice = input("Use Ollama for live story narration? (y/N): ").strip().lower()
+        if choice != 'y':
+            print("Using built-in story templates.")
+            return
+
+        model = input("Enter Ollama model name [llama3]: ").strip() or self.ollama_model
+        url = input("Enter Ollama base URL [http://localhost:11434]: ").strip() or self.ollama_url
+
+        self.use_ollama = True
+        self.ollama_model = model
+        self.ollama_url = url
+        print(f"Ollama enabled with model '{self.ollama_model}' at {self.ollama_url}.")
+
+    def _narrate_with_ai(self, section_label, base_scene):
+        """Send a short prompt to Ollama, falling back gracefully on failure."""
+        if not self.use_ollama:
+            return base_scene
+
+        prompt = (
+            "You are a warm 1950s narrator for a bookkeeping adventure. "
+            "Retell the scene vividly in 3-6 sentences with period detail.\n"
+            f"Section: {section_label}\n"
+            f"Business Type: {self.business_type}\n"
+            f"Owner Voice: {self.business_owner['name']}\n"
+            f"Scene:\n{base_scene}\n"
+            "Do not add choices or questions—just the narrative."
+        )
+
+        try:
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={"model": self.ollama_model, "prompt": prompt, "stream": False},
+                timeout=18,
+            )
+            if response.ok:
+                data = response.json()
+                ai_text = data.get("response", "").strip()
+                if ai_text:
+                    return ai_text
+        except Exception:
+            pass
+
+        return base_scene + "\n[Ollama unavailable; using built-in narration.]"
+
     def _build_daily_intro(self):
         """Constructs a narrative opening for the day."""
         detail = random.choice(self.sensory_details)
@@ -96,7 +148,7 @@ class AccountingSimulator:
         ]
 
         self.story_index += 1
-        return "\n".join(lines)
+        return self._narrate_with_ai("daily intro", "\n".join(lines))
 
     def _lead_into_event(self, idx, total):
         """Provides a short story transition for each business event."""
@@ -496,8 +548,12 @@ class AccountingSimulator:
             transaction_amount = self._parse_amount_from_scenario(scenario)
 
             lead_in = self._lead_into_event(i + 1, len(scenarios_with_suggestions))
-            print(f"\n{lead_in}")
-            print(f"Event: {scenario}")
+            story_scene = f"{lead_in}\n{scenario}"
+            narrated_scene = self._narrate_with_ai("event", story_scene)
+
+            print(f"\n{narrated_scene}")
+            if narrated_scene != story_scene:
+                print(f"(Reference entry details: {scenario})")
             print("Prompt: Capture the journal entry that preserves this moment in the books.")
 
             # Pass the extracted amount to the entry system
@@ -741,7 +797,8 @@ class AccountingSimulator:
                 break
             else:
                 print("Invalid choice.")
-        
+
+        self._setup_ai_adapter()
         self.main_menu()
 
     def main_menu(self):
