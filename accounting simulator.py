@@ -20,10 +20,16 @@ class AccountingSimulator:
         self.current_date = date(1955, 1, 3) # Starting on a Monday (Jan 1st 1955 was a Saturday, we start on the first workday)
         self.end_date = date(1955, 12, 31)
         self.transactions_today = 0
-        
+
         self.scenario_templates = self._load_templates()
         self.holidays = self._load_holidays()
         self.characters = self._load_characters()
+        self.story_beats = self._load_story_beats()
+        self.story_index = 0
+        self.monthly_bills = self._load_monthly_bills()
+
+        # Recurring bill tracker to prevent implausible repeats
+        self.last_bill_months = {}
 
     # --- Initialization and Setup ---
     
@@ -44,40 +50,87 @@ class AccountingSimulator:
             }
         }
 
+    def _load_story_beats(self):
+        """Creates a simple serialized storyline for each business type."""
+        return {
+            "SERVICE": [
+                "A new contract with the county courthouse is in the works; the clerks keep calling for invoice copies.",
+                "Mr. Sterling mentions a rival firm opening nearby. He wants pristine books to woo nervous clients.",
+                "An old radio in the office plays swing tunes as you tally hours; the mood eases during the rush.",
+                "A junior consultant asks if expense reports can be summarized—you're the steadying hand in the chaos.",
+                "Rumor has it a magazine is profiling local businesses. Sterling insists the ledgers shine."],
+            "RETAIL": [
+                "Mrs. Gable is prepping a mid-summer picnic display; vendors drop by with samples and gossip.",
+                "A local family starts a tab for the week. You keep a careful eye on their receivable balance.",
+                "Delivery boys race in with crates; the ringing cash register creates a lively soundtrack.",
+                "A traveling salesman offers a discount on canned peaches, if you note the early payment terms.",
+                "Mrs. Gable plans a harvest festival sale—she wants the books tidy before the posters go up."],
+            "MANUFACTURING": [
+                "Mr. Thorne lands a navy-adjacent contract and needs spotless records for inspectors.",
+                "The factory whistle blows at dawn; you review payroll slips while the presses warm up.",
+                "A visiting engineer asks about job costing—your ledgers guide the conversation.",
+                "Steel shipments arrive by rail, and the foreman shouts for invoices before unloading.",
+                "An efficiency expert strolls through the floor. Thorne wants every expense defended."],
+        }
+
     def _load_templates(self):
         """Defines the pool of transaction building blocks with 1950s flavor."""
         return {
             "ALL": [
-                ("Paid $XX cash to the Power Co. for monthly electricity bill.", 100, 700, "Utilities Expense"),
+                ("Paid $XX cash to the telephone switchboard operator for long-distance business calls.", 12, 35, "Utilities Expense"),
                 ("Issued $XX of Common Stock for cash (new investment from a silent partner).", 500, 5000, "Cash"),
-                ("Purchased $XX of new office furniture by issuing a Note Payable.", 500, 3000, "Equipment"),
+                ("Purchased $XX of new office furniture by issuing a Note Payable; the delivery boys track sawdust through the hallway.", 500, 3000, "Equipment"),
                 ("Made $XX payment toward the bank loan (Notes Payable liability).", 100, 1000, "Notes Payable"),
-                ("Received $XX cash from a non-core service, like copying blueprints for a neighbor.", 50, 200, "Cash"),
-                ("Paid $XX cash for minor upkeep on the typewriter.", 50, 150, "Utilities Expense"), # Catch-all expense
+                ("Received $XX cash from a non-core service, like copying blueprints for a neighbor; they chat about the Korean armistice while you work.", 50, 200, "Cash"),
+                ("Paid $XX cash for minor upkeep on the typewriter after the ribbon snapped mid-report.", 50, 150, "Utilities Expense"), # Catch-all expense
             ],
             "SERVICE": [
                 ("Billed Customer 'Capitol Studios' $XX for completed consulting work on credit. Mr. Sterling expects prompt payment.", 500, 5000, "Accounts Receivable"),
-                ("Received payment of $XX cash from Customer 'XYZ Corp' on account. Mrs. Gable was very pleased.", 500, 5000, "Cash"),
-                ("Performed $XX in services for a quick client, immediately paid in cash.", 200, 3000, "Cash"),
+                ("Received payment of $XX cash from Customer 'XYZ Corp' on account. Mr. Sterling grins and taps the ledger appreciatively.", 500, 5000, "Cash"),
+                ("Performed $XX in services for a quick client, immediately paid in cash after a lively office debate over jazz records.", 200, 3000, "Cash"),
+                ("Traveled downtown and charged $XX in train fare to visit a courthouse client; keep the receipt for reimbursement.", 5, 30, "Utilities Expense"),
             ],
             "RETAIL": [
                 ("Purchased $XX of canned goods (Inventory) on credit from Vendor 'SupplyCo'.", 800, 7000, "Inventory"),
                 ("Paid $XX cash to Vendor 'SupplyCo' on account. Mrs. Gable reminds you to keep track of discounts!", 500, 5000, "Accounts Payable"),
                 ("Sold goods on credit for $XX (Cost $YY) to Customer 'MaxRetail'. This was a large order for a local diner.", 500, 5000, "Accounts Receivable"),
-                ("Received $XX cash from Customer 'MaxRetail' on account.", 500, 5000, "Cash"),
-                ("Sold groceries for $XX cash (Cost $YY). The cash register tape is full.", 200, 3000, "Cash"),
+                ("Received $XX cash from Customer 'MaxRetail' on account. The delivery driver thanks you for keeping the books straight.", 500, 5000, "Cash"),
+                ("Sold groceries for $XX cash (Cost $YY). The cash register tape is full and smells faintly of fresh bread.", 200, 3000, "Cash"),
+                ("Paid $XX cash for an in-store radio advertisement to play during Saturday rush hour.", 40, 120, "Utilities Expense"),
             ],
             "MANUFACTURING": [
                 ("Purchased $XX of raw steel (Inventory) on credit from 'SteelCorp' for the new contract.", 1000, 10000, "Inventory"),
                 ("Paid $XX cash to Vendor 'SteelCorp' on account to ensure materials keep flowing.", 1000, 10000, "Accounts Payable"),
                 ("Paid $XX cash for the factory floor workers' weekly wages (Cost of Goods Sold).", 500, 5000, "Cost of Goods Sold"),
                 ("Billed Customer 'MegaBuild' $XX (Cost $YY) for custom metalwork delivery on credit.", 5000, 20000, "Accounts Receivable"),
+                ("Paid $XX cash to repair a conveyor belt after a late-night breakdown; the foreman is grateful.", 120, 450, "Utilities Expense"),
             ],
             "ADJUSTMENT": [
                 ("Record end-of-month wear-and-tear (depreciation) on factory machinery: $XX.", 50, 200, "Depreciation Expense"),
                 ("Recognize one month of Prepaid Office Rent expense: $YY. Mr. Sterling needs the expense booked.", 50, 150, "Rent Expense"),
             ]
         }
+
+    def _load_monthly_bills(self):
+        """Monthly or low-frequency bills that should not repeat unrealistically."""
+        return [
+            {
+                "name": "Electricity",
+                "account": "Utilities Expense",
+                "template": "Settled the monthly electric statement with Power Co. for $XX in cash after the evening meter reading.",
+                "min": 25,
+                "max": 85,
+                "day_window": (3, 8),
+            },
+            {
+                "name": "OfficeCleaning",
+                "account": "Utilities Expense",
+                "template": "Paid $XX cash to the janitorial service for a deep clean before the town's business review board visit.",
+                "min": 18,
+                "max": 60,
+                "day_window": (12, 18),
+            },
+        ]
 
     def _load_holidays(self):
         """Defines holiday easter eggs for flavor."""
@@ -150,12 +203,21 @@ class AccountingSimulator:
         """Generates a list of daily transactions based on date and business type."""
         
         scenarios = []
-        
+
         # 1. Check for Holiday Easter Eggs
         holiday_event = self.holidays.get(self.current_date)
         if holiday_event:
             # For simplicity, holidays are treated as a single event with no suggested debit
-            scenarios.append((holiday_event, None)) 
+            scenarios.append((holiday_event, None))
+
+        # 1b. Add scheduled monthly bills within their time windows
+        for bill in self.monthly_bills:
+            last_month = self.last_bill_months.get(bill["name"])
+            in_window = bill["day_window"][0] <= self.current_date.day <= bill["day_window"][1]
+            if last_month != self.current_date.month and in_window and not self._is_weekend(self.current_date):
+                amount = round(random.uniform(bill["min"], bill["max"]), 2)
+                scenarios.append((bill["template"].replace("$XX", f"${amount:,.2f}"), bill["account"]))
+                self.last_bill_months[bill["name"]] = self.current_date.month
 
         # 2. Daily Routine Transactions (1-3 events per day)
         # Structure: (template_string, min_amt, max_amt, suggested_debit_account)
@@ -390,6 +452,9 @@ class AccountingSimulator:
         print("#" * 70)
         print(f"[Interaction] Your boss, {self.business_owner['name']}, has arrived.")
         print(f"[Dialogue] {self.business_owner['dialogue']}")
+        beat = self.story_beats[self.business_type][self.story_index % len(self.story_beats[self.business_type])]
+        print(f"[Story Beat] {beat}")
+        self.story_index += 1
         print("-" * 70)
 
         for i, (scenario, suggested_debit) in enumerate(scenarios_with_suggestions):
