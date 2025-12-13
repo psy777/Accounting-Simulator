@@ -28,6 +28,7 @@ class AccountingSimulator:
         self.holidays = self._load_holidays()
         self.characters = self._load_characters()
         self.story_beats = self._load_story_beats()
+        self.story_frames = self._load_story_frames()
         self.story_index = 0
         self.monthly_bills = self._load_monthly_bills()
 
@@ -95,6 +96,23 @@ class AccountingSimulator:
                 "An efficiency expert strolls the floor with a stopwatch. Thorne leans in and whispers that the books will defend every expense."],
         }
 
+    def _load_story_frames(self):
+        """Provides guided prompts so narration matches bookkeeping actions."""
+        return {
+            "SERVICE": {
+                "voice": "Measured, civic-minded, quick to praise careful documentation for professional clients.",
+                "ledger_cue": "Emphasize receivables aging, billable hours, and reimbursable expenses for courthouse and office calls.",
+            },
+            "RETAIL": {
+                "voice": "Warm and bustling, grounded in neighborhood trust and tidy tabs behind the counter.",
+                "ledger_cue": "Track inventory flows, cash drawer integrity, and which grocer tabs need a fresh tick mark.",
+            },
+            "MANUFACTURING": {
+                "voice": "Industrial and steady, focused on contracts, materials, and payroll a foreman could audit.",
+                "ledger_cue": "Highlight raw material batches, job cost postings, and vendor schedules supporting the factory floor.",
+            },
+        }
+
     def _setup_ai_adapter(self):
         """Optional Ollama hookup to enrich narration with local LLM output."""
         choice = input("Use Ollama for live story narration? (y/N): ").strip().lower()
@@ -146,12 +164,15 @@ class AccountingSimulator:
         detail = random.choice(self.sensory_details)
         beat = self.story_beats[self.business_type][self.story_index % len(self.story_beats[self.business_type])]
         owner = self.business_owner
+        frame = self.story_frames[self.business_type]
 
         lines = [
             f"Morning, {owner['name']} steps into the doorway with a knowing smile.",
             owner['dialogue'],
             beat,
             detail,
+            f"Narrator's tone: {frame['voice']}",
+            f"Ledger focus: {frame['ledger_cue']}",
             "You take a steadying breath, ready to translate the day's stories into ink and columns."
         ]
 
@@ -169,6 +190,22 @@ class AccountingSimulator:
         ]
         lead = random.choice(transitions)
         return f"Scene {idx}/{total} — {lead}"
+
+    def _ledger_story_prompt(self, suggested_debit):
+        """Aligns the storytelling cue with a bookkeeping hint so prompts feel intentional."""
+        cues = {
+            "Accounts Receivable": "Note who owes us and mirror the balance in the AR subledger.",
+            "Accounts Payable": "Record the vendor's name and tick the AP control to match the subsidiary listing.",
+            "Inventory": "Show the stock moving in or out; pair revenue with cost if goods left the shelves.",
+            "Cash": "Mark the cash drawer or bank column to keep the daily proof tight.",
+            "Cost of Goods Sold": "Tie the expense line to the related sale so gross margin makes sense on the worksheet.",
+            "Utilities Expense": "Route upkeep and services here; these sit under operating expenses.",
+            "Rent Expense": "Accrue the month's space cost even if paid earlier as prepaid rent.",
+            "Depreciation Expense": "Post the wear and tear with a matching credit to Accumulated Depreciation.",
+            "Notes Payable": "Reduce the note and separate any interest if needed.",
+        }
+        default = "Keep the debits and credits in story order so the ledger reads like the day unfolded."
+        return cues.get(suggested_debit, default)
 
     def _load_templates(self):
         """Defines the pool of transaction building blocks with 1950s flavor."""
@@ -604,13 +641,18 @@ class AccountingSimulator:
             transaction_amount = self._parse_amount_from_scenario(scenario)
 
             lead_in = self._lead_into_event(i + 1, len(scenarios_with_suggestions))
-            story_scene = f"{lead_in}\n{scenario}"
+            ledger_cue = self._ledger_story_prompt(suggested_debit)
+            story_scene = "\n".join([
+                lead_in,
+                scenario,
+                f"Ledger cue: {ledger_cue}",
+            ])
             narrated_scene = self._narrate_with_ai("event", story_scene)
 
             print(f"\n{narrated_scene}")
             if narrated_scene != story_scene:
                 print(f"(Reference entry details: {scenario})")
-            print("Prompt: Capture the journal entry that preserves this moment in the books.")
+            print("Prompt: Journal this as if you were writing in ink—list debits first, indent credits, and name the customer or vendor if one is involved.")
 
             # Pass the extracted amount to the entry system
             self.perform_journal_entry(transaction_amount)
@@ -843,12 +885,14 @@ class AccountingSimulator:
             "INCOME STATEMENT".center(64),
             f"For the period ending {self.current_date.strftime('%B %d, %Y')}".center(64),
             "",
+            "(Use this to extend your worksheet columns: revenue on the left, expenses on the right.)",
             "REVENUE",
         ]
         for name, amount in revenue:
             lines.append(f"  {name:<40}${amount:>14,.2f}")
         lines.append("  " + "-" * 54)
         lines.append(f"  Total Revenue: ${revenue_sum:>33,.2f}")
+        lines.append("  " + "=" * 54)
         lines.append("")
         lines.append("EXPENSES")
         for name, amount in expenses:
@@ -869,6 +913,7 @@ class AccountingSimulator:
             "BALANCE SHEET".center(64),
             f"As of {self.current_date.strftime('%B %d, %Y')}".center(64),
             "",
+            "(Assets on the left column, Liabilities and Equity on the right—mirror a printed statement.)",
             "ASSETS",
         ]
         lines = heading.copy()
@@ -878,6 +923,7 @@ class AccountingSimulator:
             lines.append(f"  {prefix}{acc:<36}${bal:>14,.2f}")
         lines.append("  " + "-" * 54)
         lines.append(f"  Total Assets: ${total_assets:>33,.2f}")
+        lines.append("  " + "=" * 54)
         lines.append("")
         lines.append("LIABILITIES")
         for acc in sorted(liabilities.keys()):
@@ -902,6 +948,7 @@ class AccountingSimulator:
             gl_balance = self.gl[control_acc]
             subledger_sum = sum(entities.values())
             text_widget.insert(tk.END, f"{control_acc} (GL: ${abs(gl_balance):,.2f})\n")
+            text_widget.insert(tk.END, "  Name.................................   Balance\n")
             text_widget.insert(tk.END, "  " + "-" * 48 + "\n")
             if entities:
                 for name, bal in entities.items():
@@ -920,7 +967,9 @@ class AccountingSimulator:
             entry_date = entry.get("date")
             for acc, amount, direction, entity in entry.get("lines", []):
                 tag = 'evenrow' if row_idx % 2 == 0 else 'oddrow'
-                tree.insert('', tk.END, values=(entry_date.strftime('%b %d'), direction, acc, entity or "-", f"${amount:,.2f}"), tags=(tag,))
+                debit_str = f"${amount:,.2f}" if direction == 'DR' else ""
+                credit_str = f"${amount:,.2f}" if direction == 'CR' else ""
+                tree.insert('', tk.END, values=(entry_date.strftime('%b %d'), acc, "", debit_str, credit_str, entity or "-"), tags=(tag,))
                 row_idx += 1
 
     def _add_gui_line(self, account_var, amount_var, type_var, entity_var, listbox):
@@ -968,7 +1017,10 @@ class AccountingSimulator:
     def _advance_gui_day(self, date_label, story_box, scenario_box):
         intro = self._build_daily_intro()
         scenarios = self._generate_daily_scenario()
-        scenario_text = "\n".join([f"- {text}" for text, _ in scenarios])
+        scenario_text = "\n".join([
+            f"- {text}\n    Ledger cue: {self._ledger_story_prompt(suggested)}" if suggested else f"- {text}"
+            for text, suggested in scenarios
+        ])
         story_box.configure(state='normal')
         story_box.delete('1.0', tk.END)
         story_box.insert(tk.END, intro)
@@ -988,11 +1040,11 @@ class AccountingSimulator:
         self.gui_root.geometry("960x720")
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure('Sheet.TFrame', background='#fdfaf3', borderwidth=1, relief='groove')
+        style.configure('Sheet.TFrame', background='#fdfaf3', borderwidth=1, relief='groove', padding=6)
         style.configure('Sheet.TLabel', background='#fdfaf3', font=('Helvetica', 11, 'bold'))
         style.configure('SheetText.TLabel', background='#fdfaf3', font=('Helvetica', 10))
-        style.configure('Ledger.Treeview', font=('Courier New', 10))
-        style.configure('Ledger.Treeview.Heading', font=('Helvetica', 10, 'bold'))
+        style.configure('Ledger.Treeview', font=('Courier New', 10), rowheight=26, bordercolor='#b7b1a5', borderwidth=1)
+        style.configure('Ledger.Treeview.Heading', font=('Helvetica', 10, 'bold'), bordercolor='#6f6658', borderwidth=1, relief='raised')
         style.map('Ledger.Treeview', background=[('selected', '#d9ead3')])
         style.configure('Accent.TButton', font=('Helvetica', 10, 'bold'))
         self.gui_date_var = tk.StringVar(value=self.current_date.strftime('%A, %B %d, %Y'))
@@ -1056,6 +1108,7 @@ class AccountingSimulator:
         notebook.add(ledger_tab, text="Trial Balance")
         ledger_header = ttk.Label(ledger_tab, text="Trial Balance", style='Sheet.TLabel')
         ledger_header.pack(anchor='center', pady=(10, 2))
+        ttk.Label(ledger_tab, text="Account titles at left, reference types in the middle, ruling lines match DR | CR columns.", style='SheetText.TLabel').pack(anchor='center')
         ledger_tree = ttk.Treeview(ledger_tab, columns=("Account", "Type", "Debit", "Credit"), show='headings', style='Ledger.Treeview')
         for col, anchor in (("Account", 'w'), ("Type", 'w'), ("Debit", 'e'), ("Credit", 'e')):
             ledger_tree.heading(col, text=col, anchor=anchor)
@@ -1086,12 +1139,19 @@ class AccountingSimulator:
 
         # Journal log tab
         log_tab = ttk.Frame(notebook, style='Sheet.TFrame')
-        notebook.add(log_tab, text="Worksheets")
-        ttk.Label(log_tab, text="Posted Journal Entries", style='Sheet.TLabel').pack(anchor='center', pady=(10, 4))
-        log_tree = ttk.Treeview(log_tab, columns=("Date", "DR/CR", "Account", "Party", "Amount"), show='headings', style='Ledger.Treeview')
-        for col, anchor in (("Date", 'w'), ("DR/CR", 'center'), ("Account", 'w'), ("Party", 'w'), ("Amount", 'e')):
+        notebook.add(log_tab, text="General Journal")
+        ttk.Label(log_tab, text="General Journal — debits at left, credits at right", style='Sheet.TLabel').pack(anchor='center', pady=(10, 4))
+        log_tree = ttk.Treeview(log_tab, columns=("Date", "Account Title & Explanation", "PR", "Debit", "Credit", "Party/Ref"), show='headings', style='Ledger.Treeview')
+        heading_spec = [
+            ("Date", 'w', 80),
+            ("Account Title & Explanation", 'w', 240),
+            ("PR", 'center', 40),
+            ("Debit", 'e', 110),
+            ("Credit", 'e', 110),
+            ("Party/Ref", 'w', 140),
+        ]
+        for col, anchor, width in heading_spec:
             log_tree.heading(col, text=col, anchor=anchor)
-            width = 80 if col in ("Date", "DR/CR") else 200 if col == "Account" else 140
             log_tree.column(col, stretch=True, width=width, anchor=anchor)
         log_tree.tag_configure('evenrow', background='#f0ece4')
         log_tree.tag_configure('oddrow', background='#fffdf7')
