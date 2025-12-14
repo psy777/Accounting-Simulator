@@ -97,9 +97,36 @@ class OllamaSettings:
 
     @classmethod
     def update(cls, url: str, health: str, model: str):
-        cls.url = url
-        cls.health = health
+        cls.url = cls._normalize_endpoint(url, "generate")
+        cls.health = cls._normalize_endpoint(health, "tags")
         cls.model = model
+
+    @staticmethod
+    def _normalize_endpoint(raw: str, suffix: str) -> str:
+        """Accept either a base host or a full Ollama endpoint and return a usable URL."""
+        cleaned = (raw or "").strip()
+
+        if not cleaned:
+            return f"http://localhost:11434/api/{suffix}"
+
+        if not cleaned.startswith(("http://", "https://")):
+            cleaned = "http://" + cleaned
+
+        cleaned = cleaned.rstrip("/")
+
+        if cleaned.endswith(f"/api/{suffix}"):
+            return cleaned
+
+        if cleaned.endswith("/api"):
+            return f"{cleaned}/{suffix}"
+
+        if cleaned.endswith(f"/{suffix}"):
+            return f"{cleaned[:-len(suffix)-1]}/api/{suffix}"
+
+        if "/api/" in cleaned:
+            return cleaned
+
+        return f"{cleaned}/api/{suffix}"
 
 
 class AIHandler:
@@ -676,9 +703,7 @@ class SettingsApp(tk.Frame):
         self.entry_model = tk.Entry(form, width=25)
         self.entry_model.grid(row=2, column=1, sticky="w", pady=5, padx=5)
 
-        self.entry_url.insert(0, OllamaSettings.url)
-        self.entry_health.insert(0, OllamaSettings.health)
-        self.entry_model.insert(0, OllamaSettings.model)
+        self._sync_entries()
 
         button_bar = tk.Frame(self, bg=COLOR_PANEL)
         button_bar.pack(pady=10)
@@ -690,6 +715,7 @@ class SettingsApp(tk.Frame):
 
     def _save_and_test(self):
         OllamaSettings.update(self.entry_url.get(), self.entry_health.get(), self.entry_model.get())
+        self._sync_entries()
         AIHandler.reset_status()
         self.controller.refresh_ai_status()
         self._run_connectivity_check(prefix="Saved. ")
@@ -701,12 +727,26 @@ class SettingsApp(tk.Frame):
         def worker():
             AIHandler.reset_status()
             online = AIHandler.check_connection()
-            status = "Connected to Ollama." if online else "Could not reach Ollama. Using mock replies."
+            status = (
+                f"Connected to Ollama at {OllamaSettings.url}."
+                if online
+                else "Could not reach Ollama. Using mock replies."
+            )
             self.after(0, lambda: self.status_var.set(prefix + status))
             if online:
                 self.after(0, self.controller.refresh_ai_status)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _sync_entries(self):
+        """Show the normalized endpoints so users can see what will be used."""
+        for entry, value in (
+            (self.entry_url, OllamaSettings.url),
+            (self.entry_health, OllamaSettings.health),
+            (self.entry_model, OllamaSettings.model),
+        ):
+            entry.delete(0, tk.END)
+            entry.insert(0, value)
 
 # ==========================================
 # MAIN SIMULATOR (OS INTERFACE)
