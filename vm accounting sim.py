@@ -139,24 +139,36 @@ class OllamaSettings:
 
 class AIHandler:
     _is_online: Optional[bool] = None
+    last_error: Optional[str] = None
 
     @classmethod
     def check_connection(cls) -> bool:
-        """Ping the Ollama tags endpoint to confirm availability."""
+        """Try a minimal generate call so we only report online when chatting will work."""
         if cls._is_online is not None:
             return cls._is_online
 
         try:
-            resp = requests.get(OllamaSettings.health_endpoint(), timeout=2)
+            payload = {
+                "model": OllamaSettings.model,
+                "prompt": "ping",
+                "stream": False,
+            }
+            resp = requests.post(OllamaSettings.generate_endpoint(), json=payload, timeout=3)
             resp.raise_for_status()
+            data = resp.json()
+            if data.get("response") is None:
+                raise requests.exceptions.RequestException("No response text returned from Ollama.")
+            cls.last_error = None
             cls._is_online = True
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as exc:
+            cls.last_error = str(exc)
             cls._is_online = False
         return cls._is_online
 
     @classmethod
     def reset_status(cls):
         cls._is_online = None
+        cls.last_error = None
 
     @staticmethod
     def generate_response(prompt, system_role="You are a helpful assistant."):
@@ -173,8 +185,10 @@ class AIHandler:
             response = requests.post(OllamaSettings.generate_endpoint(), json=payload, timeout=5)
             response.raise_for_status()
             data = response.json()
+            AIHandler.last_error = None
             return data.get("response", "Error parsing AI response.")
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as exc:
+            AIHandler.last_error = str(exc)
             return AIHandler._mock_response(prompt, system_role)
 
     @staticmethod
@@ -423,7 +437,8 @@ class MessengerApp(tk.Frame):
         online = AIHandler.check_connection()
         if online:
             return "AI: Connected to Ollama"
-        return "AI: Using mock replies (start Ollama at localhost:11434 for full experience)."
+        suffix = f" (error: {AIHandler.last_error})" if AIHandler.last_error else ""
+        return f"AI: Using mock replies (start Ollama at localhost:11434 for full experience){suffix}."
 
 class AccountingApp(tk.Frame):
     def __init__(self, parent, ledger):
@@ -757,7 +772,7 @@ class SettingsApp(tk.Frame):
             status = (
                 f"Connected to Ollama at {OllamaSettings.generate_endpoint()} (based on '{OllamaSettings.raw_url}')."
                 if online
-                else "Could not reach Ollama. Using mock replies."
+                else f"Could not reach Ollama. Last error: {AIHandler.last_error or 'unknown'}. Using mock replies."
             )
             self.after(0, lambda: self.status_var.set(prefix + status))
             if online:
