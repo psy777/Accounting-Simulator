@@ -91,15 +91,23 @@ class Ledger:
 # ==========================================
 
 class OllamaSettings:
-    url: str = OLLAMA_URL
-    health: str = OLLAMA_HEALTH
+    raw_url: str = OLLAMA_URL
+    raw_health: str = OLLAMA_HEALTH
     model: str = OLLAMA_MODEL
 
     @classmethod
     def update(cls, url: str, health: str, model: str):
-        cls.url = cls._normalize_endpoint(url, "generate")
-        cls.health = cls._normalize_endpoint(health, "tags")
-        cls.model = model
+        cls.raw_url = (url or OLLAMA_URL).strip()
+        cls.raw_health = (health or OLLAMA_HEALTH).strip()
+        cls.model = model or OLLAMA_MODEL
+
+    @classmethod
+    def generate_endpoint(cls) -> str:
+        return cls._normalize_endpoint(cls.raw_url, "generate")
+
+    @classmethod
+    def health_endpoint(cls) -> str:
+        return cls._normalize_endpoint(cls.raw_health, "tags")
 
     @staticmethod
     def _normalize_endpoint(raw: str, suffix: str) -> str:
@@ -139,7 +147,7 @@ class AIHandler:
             return cls._is_online
 
         try:
-            resp = requests.get(OllamaSettings.health, timeout=2)
+            resp = requests.get(OllamaSettings.health_endpoint(), timeout=2)
             resp.raise_for_status()
             cls._is_online = True
         except requests.exceptions.RequestException:
@@ -162,7 +170,7 @@ class AIHandler:
             "stream": False
         }
         try:
-            response = requests.post(OllamaSettings.url, json=payload, timeout=5)
+            response = requests.post(OllamaSettings.generate_endpoint(), json=payload, timeout=5)
             response.raise_for_status()
             data = response.json()
             return data.get("response", "Error parsing AI response.")
@@ -329,12 +337,31 @@ class MessengerApp(tk.Frame):
         threading.Thread(target=self._get_ai_reply, args=(self.current_contact, msg)).start()
 
     def _get_ai_reply(self, contact, user_msg):
-        system_role = self.contacts[contact]
-        prompt = f"User said: '{user_msg}'. Reply in character, keep it under 2 sentences."
-        
+        system_role = (
+            f"{self.contacts[contact]} Stay in character for this persona."
+            " Keep replies concise (1-3 sentences) and professional,"
+            " including invoice numbers, amounts, due dates, or next steps when relevant."
+        )
+        prompt = self._build_prompt(contact, user_msg)
+
         reply = AIHandler.generate_response(prompt, system_role)
-        
+
         self.controller.after(0, lambda: self.receive_message(contact, reply))
+
+    def _build_prompt(self, contact: str, user_msg: str) -> str:
+        persona = self.contacts.get(contact, "You are a helpful assistant in a bookkeeping simulator.")
+        style_rules = (
+            "Respond as a short messenger chat. Keep messages brief (1-3 sentences),"
+            " businesslike, and actionable. Mention key bookkeeping details"
+            " such as invoice numbers, dates, totals, payment instructions,"
+            " and what to log in the books whenever appropriate."
+        )
+        return (
+            f"Contact persona: {persona}\n"
+            f"Response style: {style_rules}\n"
+            f"Player message: {user_msg}\n"
+            "Craft the reply now."
+        )
 
     def receive_message(self, contact, message):
         self.chat_history[contact].append((contact, message))
@@ -728,7 +755,7 @@ class SettingsApp(tk.Frame):
             AIHandler.reset_status()
             online = AIHandler.check_connection()
             status = (
-                f"Connected to Ollama at {OllamaSettings.url}."
+                f"Connected to Ollama at {OllamaSettings.generate_endpoint()} (based on '{OllamaSettings.raw_url}')."
                 if online
                 else "Could not reach Ollama. Using mock replies."
             )
@@ -739,10 +766,10 @@ class SettingsApp(tk.Frame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _sync_entries(self):
-        """Show the normalized endpoints so users can see what will be used."""
+        """Preserve user-entered endpoints without auto-modifying them."""
         for entry, value in (
-            (self.entry_url, OllamaSettings.url),
-            (self.entry_health, OllamaSettings.health),
+            (self.entry_url, OllamaSettings.raw_url),
+            (self.entry_health, OllamaSettings.raw_health),
             (self.entry_model, OllamaSettings.model),
         ):
             entry.delete(0, tk.END)
