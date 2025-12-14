@@ -6,7 +6,7 @@ import threading
 import requests
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
 # ==========================================
@@ -301,12 +301,44 @@ class Invoice:
     amount: float
     description: str
     due_date: str
+    direction: str = "payable"  # payable or receivable
+    status: str = "unposted"  # unposted, posted, paid, invoiced
 
     def as_message(self) -> str:
         return (
             f"[INVOICE {self.number}] From: {self.from_company} To: {self.to_company} "
             f"Amount: ${self.amount:,.2f} | Due: {self.due_date} | Details: {self.description}"
         )
+
+
+class BusinessState:
+    """Tracks the live state of the simulated business so the UI feels coherent."""
+
+    def __init__(self, ledger: Ledger):
+        self.ledger = ledger
+        self.cash_balance: float = 5000.0
+        self.activity_log: List[str] = []
+        self.invoices: List[Invoice] = []
+
+    def add_invoice(self, invoice: Invoice):
+        self.invoices.append(invoice)
+        self.activity_log.append(f"Logged invoice {invoice.number} ({invoice.direction}) for ${invoice.amount:,.2f}")
+
+    def mark_posted(self, invoice: Invoice):
+        invoice.status = "posted"
+        self.activity_log.append(f"Posted {invoice.number} to ledger")
+
+    def mark_paid(self, invoice: Invoice):
+        invoice.status = "paid"
+        delta = -invoice.amount if invoice.direction == "payable" else invoice.amount
+        self.cash_balance += delta
+        self.activity_log.append(f"Cash {'decrease' if delta < 0 else 'increase'} on {invoice.number}: ${abs(delta):,.2f}")
+
+    def outstanding(self, direction: str):
+        return [inv for inv in self.invoices if inv.direction == direction and inv.status != "paid"]
+
+    def latest_activity(self, limit: int = 8) -> List[str]:
+        return list(self.activity_log)[-limit:]
 
 # ==========================================
 # GUI: COMPONENTS & APPS
@@ -354,9 +386,10 @@ class DocumentViewer(tk.Toplevel):
         tk.Button(self, text="Close", command=self.destroy).pack(pady=10)
 
 class MessengerApp(tk.Frame):
-    def __init__(self, parent, controller):
+    def __init__(self, parent, controller, business_state: BusinessState):
         super().__init__(parent, bg=COLOR_PANEL)
         self.controller = controller
+        self.business_state = business_state
         self.contacts = {
             "Boss": "You are the Boss of a small business. You are demanding but fair. You rely on the bookkeeper.",
             "Landlord (Rent)": "You are a landlord asking for rent payment.",
@@ -414,7 +447,7 @@ class MessengerApp(tk.Frame):
 
     def _inject_initial_messages(self):
         self.receive_message("Boss", "Welcome to the team. Open the Academy app to learn the ropes.")
-        self._deliver_invoice(Invoice("#1001", "Northwind Properties", "Your Company", 1200.00, "Office Rent", "Due this month"))
+        self._deliver_invoice(Invoice("#1001", "Northwind Properties", "Your Company", 1200.00, "Office Rent", "Due this month", direction="payable"))
 
     def switch_contact(self, contact):
         self.current_contact = contact
@@ -461,12 +494,26 @@ class MessengerApp(tk.Frame):
             " such as invoice numbers, dates, totals, payment instructions,"
             " and what to log in the books whenever appropriate."
         )
+        summary = self._business_context_summary()
         return (
             f"Contact persona: {persona}\n"
             f"Response style: {style_rules}\n"
+            f"Business state summary: {summary}\n"
             f"Player message: {user_msg}\n"
             "Craft the reply now."
         )
+
+    def _business_context_summary(self) -> str:
+        payables = ", ".join(
+            f"{inv.number} ${inv.amount:,.0f} due {inv.due_date}"
+            for inv in self.business_state.outstanding("payable")
+        ) or "no payables"
+        receivables = ", ".join(
+            f"{inv.number} ${inv.amount:,.0f} due {inv.due_date}"
+            for inv in self.business_state.outstanding("receivable")
+        ) or "no receivables"
+        cash = f"cash on hand ${self.business_state.cash_balance:,.0f}"
+        return f"{cash}; payables: {payables}; receivables: {receivables}"
 
     def receive_message(self, contact, message):
         self.chat_history[contact].append((contact, message))
@@ -508,21 +555,26 @@ class MessengerApp(tk.Frame):
                     amount=float(entry_amt.get()),
                     description=entry_desc.get() or "Services rendered",
                     due_date=entry_due.get(),
+                    direction="receivable",
                 )
             except ValueError:
                 messagebox.showerror("Invalid", "Amount must be numeric")
                 return
 
             self.invoices.append(invoice)
+            self.business_state.add_invoice(invoice)
             self.chat_history[self.current_contact].append(("Me", invoice.as_message()))
             self._refresh_chat()
+            self.controller.after(0, self.controller.refresh_dashboard)
             dialog.destroy()
 
         tk.Button(dialog, text="Send", command=send, bg=COLOR_SUCCESS).grid(row=4, column=0, columnspan=2, pady=10, sticky="ew")
 
     def _deliver_invoice(self, invoice: Invoice):
         self.invoices.append(invoice)
+        self.business_state.add_invoice(invoice)
         self.receive_message(invoice.from_company if invoice.from_company in self.contacts else "Supplier (TechParts)", invoice.as_message())
+        self.controller.after(0, self.controller.refresh_dashboard)
 
     def _ai_status_text(self):
         online = AIHandler.check_connection()
@@ -750,6 +802,159 @@ class SpreadsheetApp(tk.Frame):
         self.rows: List[Dict[str, str]] = []
         self._setup_ui()
 
+
+class DashboardApp(tk.Frame):
+    def __init__(self, parent, business_state: BusinessState):
+        super().__init__(parent, bg=COLOR_PANEL)
+        self.business_state = business_state
+        self._setup_ui()
+        self.refresh()
+
+    def _setup_ui(self):
+        header = tk.Label(self, text="OPERATIONS DASHBOARD", font=FONT_HEADER, bg=COLOR_PANEL, fg=COLOR_ACCENT)
+        header.pack(pady=8)
+
+        metrics = tk.Frame(self, bg=COLOR_PANEL)
+        metrics.pack(fill="x", padx=10)
+
+        self.lbl_cash = tk.Label(metrics, text="Cash: $0", bg=COLOR_PANEL, fg=COLOR_FG, font=FONT_HEADER)
+        self.lbl_cash.pack(side="left", padx=10)
+        self.lbl_payables = tk.Label(metrics, text="Payables: 0", bg=COLOR_PANEL, fg=COLOR_WARNING, font=FONT_HEADER)
+        self.lbl_payables.pack(side="left", padx=10)
+        self.lbl_receivables = tk.Label(metrics, text="Receivables: 0", bg=COLOR_PANEL, fg=COLOR_SUCCESS, font=FONT_HEADER)
+        self.lbl_receivables.pack(side="left", padx=10)
+
+        body = tk.Frame(self, bg=COLOR_PANEL)
+        body.pack(fill="both", expand=True, padx=10, pady=10)
+
+        tk.Label(body, text="Invoice Inbox", bg=COLOR_PANEL, fg=COLOR_FG, font=FONT_MAIN).pack(anchor="w")
+        columns = ("Number", "Direction", "Amount", "Due", "Status", "Description")
+        self.table = ttk.Treeview(body, columns=columns, show="headings", height=10)
+        for col in columns:
+            self.table.heading(col, text=col)
+            self.table.column(col, width=140)
+        self.table.pack(fill="both", expand=True)
+
+        btns = tk.Frame(body, bg=COLOR_PANEL)
+        btns.pack(fill="x", pady=6)
+        tk.Button(btns, text="Refresh", command=self.refresh, bg=COLOR_ACCENT).pack(side="left", padx=4)
+        tk.Button(btns, text="Post to Ledger", command=self._post_selected, bg=COLOR_SUCCESS).pack(side="left", padx=4)
+        tk.Button(btns, text="Mark Paid/Received", command=self._settle_selected, bg=COLOR_WARNING).pack(side="left", padx=4)
+
+        tk.Label(body, text="Recent Activity", bg=COLOR_PANEL, fg=COLOR_FG, font=FONT_MAIN).pack(anchor="w", pady=(10, 0))
+        self.activity = scrolledtext.ScrolledText(body, height=6, bg=COLOR_BG, fg=COLOR_FG, font=FONT_MAIN)
+        self.activity.pack(fill="x")
+        self.activity.config(state="disabled")
+
+    def refresh(self):
+        self.lbl_cash.config(text=f"Cash: ${self.business_state.cash_balance:,.0f}")
+        self.lbl_payables.config(text=f"Payables: {len(self.business_state.outstanding('payable'))}")
+        self.lbl_receivables.config(text=f"Receivables: {len(self.business_state.outstanding('receivable'))}")
+
+        for row in self.table.get_children():
+            self.table.delete(row)
+        for inv in self.business_state.invoices:
+            self.table.insert("", tk.END, values=(
+                inv.number,
+                inv.direction,
+                f"${inv.amount:,.2f}",
+                inv.due_date,
+                inv.status,
+                inv.description,
+            ))
+
+        self.activity.config(state="normal")
+        self.activity.delete(1.0, tk.END)
+        for line in self.business_state.latest_activity():
+            self.activity.insert(tk.END, f"• {line}\n")
+        self.activity.config(state="disabled")
+
+    def _get_selected_invoice(self) -> Optional[Invoice]:
+        sel = self.table.selection()
+        if not sel:
+            return None
+        number = self.table.item(sel[0], "values")[0]
+        for inv in self.business_state.invoices:
+            if inv.number == number:
+                return inv
+        return None
+
+    def _post_selected(self):
+        inv = self._get_selected_invoice()
+        if not inv:
+            messagebox.showwarning("No selection", "Select an invoice to post.")
+            return
+        if inv.status not in {"unposted", "invoiced"}:
+            messagebox.showinfo("Already posted", f"{inv.number} is already {inv.status}.")
+            return
+        try:
+            debit, credit = self._build_entry(inv)
+            self.business_state.ledger.add_entry(
+                datetime.date.today().isoformat(),
+                f"Post {inv.number} - {inv.description}",
+                debit,
+                credit,
+            )
+            inv.status = "posted"
+            self.business_state.mark_posted(inv)
+        except ValueError as exc:
+            messagebox.showerror("Unbalanced", str(exc))
+        self.refresh()
+
+    def _settle_selected(self):
+        inv = self._get_selected_invoice()
+        if not inv:
+            messagebox.showwarning("No selection", "Select an invoice to settle.")
+            return
+        if inv.status == "paid":
+            messagebox.showinfo("Already settled", f"{inv.number} is already paid/received.")
+            return
+        if inv.status == "unposted":
+            self._post_selected()
+            inv = self._get_selected_invoice()
+            if not inv or inv.status == "unposted":
+                return
+        debit = {}
+        credit = {}
+        if inv.direction == "payable":
+            debit["Accounts Payable"] = inv.amount
+            credit["Cash"] = inv.amount
+        else:
+            debit["Cash"] = inv.amount
+            credit["Accounts Receivable"] = inv.amount
+        try:
+            self.business_state.ledger.add_entry(
+                datetime.date.today().isoformat(),
+                f"Settle {inv.number}",
+                debit,
+                credit,
+            )
+            self.business_state.mark_paid(inv)
+        except ValueError as exc:
+            messagebox.showerror("Unbalanced", str(exc))
+        self.refresh()
+
+    def _build_entry(self, inv: Invoice):
+        description = inv.description.lower()
+        debit = {}
+        credit = {}
+        if inv.direction == "payable":
+            debit[self._guess_expense_account(description)] = inv.amount
+            credit["Accounts Payable"] = inv.amount
+        else:
+            debit["Accounts Receivable"] = inv.amount
+            credit["Sales Revenue"] = inv.amount
+        return debit, credit
+
+    def _guess_expense_account(self, desc: str) -> str:
+        if "rent" in desc:
+            return "Rent Expense"
+        if "wage" in desc or "payroll" in desc:
+            return "Wages Expense"
+        if "inventory" in desc or "parts" in desc or "equipment" in desc:
+            return "Cost of Goods Sold"
+        return "Office Supplies"
+
     def _setup_ui(self):
         header = tk.Label(self, text="SPREADSHEET (Trial Balance Sandbox)", font=FONT_HEADER, bg=COLOR_PANEL, fg=COLOR_ACCENT)
         header.pack(pady=8)
@@ -898,8 +1103,9 @@ class SimulatorOS(tk.Tk):
         self.title("PyBookkeeper OS v1.0")
         self.geometry("1100x700")
         self.configure(bg=COLOR_BG)
-        
+
         self.ledger = Ledger()
+        self.business_state = BusinessState(self.ledger)
         
         # Main Layout: Sidebar (Launcher) + Main Area
         self.sidebar = tk.Frame(self, bg="#2E3440", width=80)
@@ -919,7 +1125,8 @@ class SimulatorOS(tk.Tk):
 
     def _init_apps(self):
         # We stack frames and just raise the one we want to see
-        self.apps["Messenger"] = MessengerApp(self.main_area, self)
+        self.apps["Dashboard"] = DashboardApp(self.main_area, self.business_state)
+        self.apps["Messenger"] = MessengerApp(self.main_area, self, self.business_state)
         self.apps["Accounting"] = AccountingApp(self.main_area, self.ledger)
         self.apps["Spreadsheet"] = SpreadsheetApp(self.main_area, self.ledger)
         self.apps["Academy"] = GuideApp(self.main_area)
@@ -927,8 +1134,8 @@ class SimulatorOS(tk.Tk):
         
         for app in self.apps.values():
             app.place(relx=0, rely=0, relwidth=1, relheight=1)
-        
-        self.open_app("Messenger")
+
+        self.open_app("Dashboard")
 
     def _create_sidebar_buttons(self):
         # Create launcher buttons
@@ -952,11 +1159,16 @@ class SimulatorOS(tk.Tk):
         if messenger:
             messenger.refresh_ai_status()
 
+    def refresh_dashboard(self):
+        dash = self.apps.get("Dashboard")
+        if dash:
+            dash.refresh()
+
     def _random_event_trigger(self):
         """Simulates business events periodically"""
         events = [
-            Invoice("#1002", "Landlord (Rent)", "Your Company", 1200.00, "Office rent - overdue", "Due in 7 days"),
-            Invoice("#5478", "Supplier (TechParts)", "Your Company", 200.00, "Keyboard shipment", "Net 30"),
+            Invoice("#1002", "Landlord (Rent)", "Your Company", 1200.00, "Office rent - overdue", "Due in 7 days", direction="payable"),
+            Invoice("#5478", "Supplier (TechParts)", "Your Company", 200.00, "Keyboard shipment", "Net 30", direction="payable"),
             ("Customer (BigCorp)", "We need an invoice for the consultation yesterday. $500."),
             ("Boss", "I just bought a new coffee machine for the office using the company card ($150). Log it.")
         ]
@@ -968,6 +1180,7 @@ class SimulatorOS(tk.Tk):
             else:
                 contact, msg = choice
                 self.apps["Messenger"].receive_message(contact, msg)
+        self.refresh_dashboard()
             
         # Reschedule
         self.after(10000, self._random_event_trigger)
