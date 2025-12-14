@@ -90,6 +90,18 @@ class Ledger:
 # BACKEND: OLLAMA / AI INTEGRATION
 # ==========================================
 
+class OllamaSettings:
+    url: str = OLLAMA_URL
+    health: str = OLLAMA_HEALTH
+    model: str = OLLAMA_MODEL
+
+    @classmethod
+    def update(cls, url: str, health: str, model: str):
+        cls.url = url
+        cls.health = health
+        cls.model = model
+
+
 class AIHandler:
     _is_online: Optional[bool] = None
 
@@ -100,12 +112,16 @@ class AIHandler:
             return cls._is_online
 
         try:
-            resp = requests.get(OLLAMA_HEALTH, timeout=2)
+            resp = requests.get(OllamaSettings.health, timeout=2)
             resp.raise_for_status()
             cls._is_online = True
         except requests.exceptions.RequestException:
             cls._is_online = False
         return cls._is_online
+
+    @classmethod
+    def reset_status(cls):
+        cls._is_online = None
 
     @staticmethod
     def generate_response(prompt, system_role="You are a helpful assistant."):
@@ -113,13 +129,13 @@ class AIHandler:
         Connects to local Ollama instance. Falls back to mock if connection fails.
         """
         payload = {
-            "model": OLLAMA_MODEL,
+            "model": OllamaSettings.model,
             "prompt": prompt,
             "system": system_role,
             "stream": False
         }
         try:
-            response = requests.post(OLLAMA_URL, json=payload, timeout=5)
+            response = requests.post(OllamaSettings.url, json=payload, timeout=5)
             response.raise_for_status()
             data = response.json()
             return data.get("response", "Error parsing AI response.")
@@ -165,9 +181,13 @@ class ToolTip:
         self.widget.bind("<Leave>", self.leave)
 
     def enter(self, event=None):
-        x, y, _, _ = self.widget.bbox("insert")
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 25
+        try:
+            x, y, _, _ = self.widget.bbox("insert")
+            x += self.widget.winfo_rootx() + 25
+            y += self.widget.winfo_rooty() + 25
+        except tk.TclError:
+            x = self.widget.winfo_pointerx() + 20
+            y = self.widget.winfo_pointery() + 20
         self.tooltip = tk.Toplevel(self.widget)
         self.tooltip.wm_overrideredirect(True)
         self.tooltip.wm_geometry(f"+{x}+{y}")
@@ -248,6 +268,9 @@ class MessengerApp(tk.Frame):
 
         self.ai_status = tk.Label(self.sidebar, text=self._ai_status_text(), bg=COLOR_BG, fg=COLOR_FG, wraplength=120)
         self.ai_status.pack(pady=5, padx=5)
+
+    def refresh_ai_status(self):
+        self.ai_status.config(text=self._ai_status_text())
 
     def _inject_initial_messages(self):
         self.receive_message("Boss", "Welcome to the team. Open the Academy app to learn the ropes.")
@@ -626,6 +649,65 @@ class SpreadsheetApp(tk.Frame):
             self.table.delete(row)
         self.rows.clear()
 
+
+class SettingsApp(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, bg=COLOR_PANEL)
+        self.controller = controller
+        self.status_var = tk.StringVar(value="Configure your Ollama endpoint and model.")
+        self._setup_ui()
+
+    def _setup_ui(self):
+        header = tk.Label(self, text="SETTINGS", font=FONT_HEADER, bg=COLOR_PANEL, fg=COLOR_ACCENT)
+        header.pack(pady=10)
+
+        form = tk.Frame(self, bg=COLOR_PANEL)
+        form.pack(pady=10, padx=20, fill="x")
+
+        tk.Label(form, text="Ollama Generate URL", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=0, column=0, sticky="e", pady=5, padx=5)
+        self.entry_url = tk.Entry(form, width=50)
+        self.entry_url.grid(row=0, column=1, sticky="w", pady=5, padx=5)
+
+        tk.Label(form, text="Ollama Health URL", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=1, column=0, sticky="e", pady=5, padx=5)
+        self.entry_health = tk.Entry(form, width=50)
+        self.entry_health.grid(row=1, column=1, sticky="w", pady=5, padx=5)
+
+        tk.Label(form, text="Model Name", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=2, column=0, sticky="e", pady=5, padx=5)
+        self.entry_model = tk.Entry(form, width=25)
+        self.entry_model.grid(row=2, column=1, sticky="w", pady=5, padx=5)
+
+        self.entry_url.insert(0, OllamaSettings.url)
+        self.entry_health.insert(0, OllamaSettings.health)
+        self.entry_model.insert(0, OllamaSettings.model)
+
+        button_bar = tk.Frame(self, bg=COLOR_PANEL)
+        button_bar.pack(pady=10)
+
+        tk.Button(button_bar, text="Save & Test", command=self._save_and_test, bg=COLOR_SUCCESS).pack(side="left", padx=5)
+        tk.Button(button_bar, text="Check Connection", command=self._test_only, bg=COLOR_ACCENT).pack(side="left", padx=5)
+
+        tk.Label(self, textvariable=self.status_var, bg=COLOR_PANEL, fg=COLOR_FG, wraplength=600, justify="left").pack(pady=10, padx=15, fill="x")
+
+    def _save_and_test(self):
+        OllamaSettings.update(self.entry_url.get(), self.entry_health.get(), self.entry_model.get())
+        AIHandler.reset_status()
+        self.controller.refresh_ai_status()
+        self._run_connectivity_check(prefix="Saved. ")
+
+    def _test_only(self):
+        self._run_connectivity_check()
+
+    def _run_connectivity_check(self, prefix: str = ""):
+        def worker():
+            AIHandler.reset_status()
+            online = AIHandler.check_connection()
+            status = "Connected to Ollama." if online else "Could not reach Ollama. Using mock replies."
+            self.after(0, lambda: self.status_var.set(prefix + status))
+            if online:
+                self.after(0, self.controller.refresh_ai_status)
+
+        threading.Thread(target=worker, daemon=True).start()
+
 # ==========================================
 # MAIN SIMULATOR (OS INTERFACE)
 # ==========================================
@@ -661,6 +743,7 @@ class SimulatorOS(tk.Tk):
         self.apps["Accounting"] = AccountingApp(self.main_area, self.ledger)
         self.apps["Spreadsheet"] = SpreadsheetApp(self.main_area, self.ledger)
         self.apps["Academy"] = GuideApp(self.main_area)
+        self.apps["Settings"] = SettingsApp(self.main_area, self)
         
         for app in self.apps.values():
             app.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -683,6 +766,11 @@ class SimulatorOS(tk.Tk):
 
     def open_app(self, app_name):
         self.apps[app_name].tkraise()
+
+    def refresh_ai_status(self):
+        messenger = self.apps.get("Messenger")
+        if messenger:
+            messenger.refresh_ai_status()
 
     def _random_event_trigger(self):
         """Simulates business events periodically"""
