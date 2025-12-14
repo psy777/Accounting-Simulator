@@ -7,6 +7,7 @@ import requests
 import random
 import time
 import sys
+import traceback
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
@@ -26,6 +27,18 @@ COLOR_SUCCESS = "#A3BE8C"
 COLOR_WARNING = "#EBCB8B"
 COLOR_ERROR = "#BF616A"
 COLOR_PANEL = "#3B4252"
+
+
+def log_exception_to_file(exc, val, tb, context: str = ""):
+    """Persist stack traces so startup crashes are debuggable for users."""
+    stack = "".join(traceback.format_exception(exc, val, tb))
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    context_note = f"[{context}] " if context else ""
+    try:
+        with open("simulator_error.log", "a", encoding="utf-8") as fh:
+            fh.write(f"{stamp} {context_note}{stack}\n")
+    except Exception:
+        pass
 
 # ==========================================
 # BACKEND: ACCOUNTING LOGIC
@@ -178,7 +191,10 @@ class AIHandler:
         try:
             resp = requests.post(OllamaSettings.generate_endpoint(), json=payload, timeout=timeout)
             resp.raise_for_status()
-            data = resp.json()
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise requests.exceptions.RequestException(f"Invalid JSON from Ollama generate: {exc}") from exc
             if data.get("response") is None:
                 raise requests.exceptions.RequestException("No response text returned from Ollama.")
             cls.last_error = None
@@ -186,7 +202,7 @@ class AIHandler:
             cls.last_endpoint = OllamaSettings.generate_endpoint()
             cls.last_mode = "generate"
             return True
-        except requests.exceptions.RequestException as exc:
+        except (requests.exceptions.RequestException, Exception) as exc:
             cls.last_error = str(exc)
             cls._is_online = False
             return False
@@ -204,7 +220,10 @@ class AIHandler:
         try:
             resp = requests.post(OllamaSettings.chat_endpoint(), json=payload, timeout=timeout)
             resp.raise_for_status()
-            data = resp.json()
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise requests.exceptions.RequestException(f"Invalid JSON from Ollama chat: {exc}") from exc
             content = None
             if isinstance(data, dict):
                 content = data.get("message", {}).get("content") or data.get("response")
@@ -215,7 +234,7 @@ class AIHandler:
             cls.last_endpoint = OllamaSettings.chat_endpoint()
             cls.last_mode = "chat"
             return True
-        except requests.exceptions.RequestException as exc:
+        except (requests.exceptions.RequestException, Exception) as exc:
             cls.last_error = str(exc)
             cls._is_online = False
             return False
@@ -247,7 +266,7 @@ class AIHandler:
                 data = response.json()
                 AIHandler.last_error = None
                 return data.get("response", "Error parsing AI response.")
-            except requests.exceptions.RequestException as exc:
+            except (requests.exceptions.RequestException, ValueError, Exception) as exc:
                 AIHandler.last_error = str(exc)
 
         if AIHandler._try_chat(prompt, system_role):
@@ -268,7 +287,7 @@ class AIHandler:
                 data = response.json()
                 AIHandler.last_error = None
                 return (data.get("message", {}) or {}).get("content") or data.get("response", "Error parsing AI response.")
-            except requests.exceptions.RequestException as exc:
+            except (requests.exceptions.RequestException, ValueError, Exception) as exc:
                 AIHandler.last_error = str(exc)
 
         AIHandler._is_online = False
@@ -578,13 +597,17 @@ class MessengerApp(tk.Frame):
         self.controller.after(0, self.controller.refresh_dashboard)
 
     def _ai_status_text(self):
-        online = AIHandler.check_connection()
-        if online:
-            endpoint = AIHandler.last_endpoint or OllamaSettings.generate_endpoint()
-            mode = AIHandler.last_mode or "generate"
-            return f"AI: Connected via {mode} at {endpoint}"
-        suffix = f" (error: {AIHandler.last_error})" if AIHandler.last_error else ""
-        return f"AI: Using mock replies; start Ollama and click Settings > Check Connection{suffix}."
+        try:
+            online = AIHandler.check_connection()
+            if online:
+                endpoint = AIHandler.last_endpoint or OllamaSettings.generate_endpoint()
+                mode = AIHandler.last_mode or "generate"
+                return f"AI: Connected via {mode} at {endpoint}"
+            suffix = f" (error: {AIHandler.last_error})" if AIHandler.last_error else ""
+            return f"AI: Using mock replies; start Ollama and click Settings > Check Connection{suffix}."
+        except Exception as exc:
+            log_exception_to_file(type(exc), exc, exc.__traceback__, context="ai-status")
+            return "AI: Offline (error while checking status)."
 
 class AccountingApp(tk.Frame):
     def __init__(self, parent, ledger):
@@ -599,7 +622,12 @@ class AccountingApp(tk.Frame):
             style.theme_use('clam')
         except tk.TclError:
             # Fall back gracefully if the theme is unavailable instead of crashing the app
-            style.theme_use(style.theme_names()[0])
+            names = style.theme_names()
+            fallback = names[0] if names else 'default'
+            try:
+                style.theme_use(fallback)
+            except tk.TclError:
+                pass
         
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True)
@@ -1235,10 +1263,8 @@ class SimulatorOS(tk.Tk):
         self.after(10000, self._random_event_trigger)
 
     def _handle_callback_exception(self, exc, val, tb):
-        import traceback
-
-        stack = "".join(traceback.format_exception(exc, val, tb))
-        print(stack)
+        log_exception_to_file(exc, val, tb, context="tk-callback")
+        print("\n=== Tk callback error ===\n", "".join(traceback.format_exception(exc, val, tb)))
         try:
             messagebox.showerror("Unexpected Error", "A background action failed. Check the console for details.")
         except tk.TclError:
@@ -1312,5 +1338,13 @@ class SimulatorOS(tk.Tk):
             self.after(10000, self._random_event_trigger)
 
 if __name__ == "__main__":
-    app = SimulatorOS()
-    app.mainloop()
+    try:
+        app = SimulatorOS()
+        app.mainloop()
+    except Exception as exc:
+        log_exception_to_file(type(exc), exc, exc.__traceback__, context="startup")
+        print("\nSimulator failed to start. See simulator_error.log for details.\n")
+        try:
+            messagebox.showerror("Startup Failed", "The simulator could not start. Check simulator_error.log for details.")
+        except tk.TclError:
+            pass
