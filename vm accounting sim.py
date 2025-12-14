@@ -273,15 +273,6 @@ class AIHandler:
         AIHandler._is_online = False
         return AIHandler._mock_response(prompt, system_role)
 
-
-def prompt_with_system(user_prompt: str, system_role: str) -> str:
-    """Combine system and user instructions into a single prompt for /generate."""
-    return (
-        f"System instructions: {system_role}\n"
-        f"User message: {user_prompt}\n"
-        "Assistant response:"
-    )
-
     @staticmethod
     def _mock_response(prompt, role):
         # Fallback if user doesn't have Ollama
@@ -291,6 +282,15 @@ def prompt_with_system(user_prompt: str, system_role: str) -> str:
             return "Good work. Keep the books balanced."
         else:
             return "I received your message."
+
+
+def prompt_with_system(user_prompt: str, system_role: str) -> str:
+    """Combine system and user instructions into a single prompt for /generate."""
+    return (
+        f"System instructions: {system_role}\n"
+        f"User message: {user_prompt}\n"
+        "Assistant response:"
+    )
 
 
 @dataclass
