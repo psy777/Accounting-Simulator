@@ -947,7 +947,12 @@ class DashboardApp(tk.Frame):
         self.lbl_cash: Optional[tk.Label] = None
         self.lbl_payables: Optional[tk.Label] = None
         self.lbl_receivables: Optional[tk.Label] = None
-        self._setup_ui()
+        self.table: Optional[ttk.Treeview] = None
+        self.activity: Optional[scrolledtext.ScrolledText] = None
+        try:
+            self._setup_ui()
+        except Exception as exc:
+            log_exception_to_file(type(exc), exc, exc.__traceback__, context="dashboard-ui")
         self.refresh()
 
     def _setup_ui(self):
@@ -987,7 +992,7 @@ class DashboardApp(tk.Frame):
         self.activity.config(state="disabled")
 
     def refresh(self):
-        if not all([self.lbl_cash, self.lbl_payables, self.lbl_receivables]):
+        if not all([self.lbl_cash, self.lbl_payables, self.lbl_receivables, self.table, self.activity]):
             # If the UI failed to initialize fully, avoid crashing the simulator.
             return
 
