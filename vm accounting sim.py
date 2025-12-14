@@ -985,11 +985,76 @@ class DashboardApp(tk.Frame):
         tk.Button(btns, text="Refresh", command=self.refresh, bg=COLOR_ACCENT).pack(side="left", padx=4)
         tk.Button(btns, text="Post to Ledger", command=self._post_selected, bg=COLOR_SUCCESS).pack(side="left", padx=4)
         tk.Button(btns, text="Mark Paid/Received", command=self._settle_selected, bg=COLOR_WARNING).pack(side="left", padx=4)
+        tk.Button(btns, text="New Invoice/Bill", command=self._open_new_invoice, bg=COLOR_BG, fg=COLOR_FG).pack(side="left", padx=4)
 
         tk.Label(body, text="Recent Activity", bg=COLOR_PANEL, fg=COLOR_FG, font=FONT_MAIN).pack(anchor="w", pady=(10, 0))
         self.activity = scrolledtext.ScrolledText(body, height=6, bg=COLOR_BG, fg=COLOR_FG, font=FONT_MAIN)
         self.activity.pack(fill="x")
         self.activity.config(state="disabled")
+
+    def _open_new_invoice(self):
+        """Quick creation of a payable or receivable that feeds the dashboard and ledger posting flow."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Create Invoice or Bill")
+        dialog.configure(bg=COLOR_PANEL)
+
+        tk.Label(dialog, text="Invoice #", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        entry_num = tk.Entry(dialog)
+        entry_num.grid(row=0, column=1, padx=5, pady=5)
+        entry_num.insert(0, f"#{random.randint(3000, 9999)}")
+
+        tk.Label(dialog, text="Direction", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        direction_var = tk.StringVar(value="payable")
+        ttk.Combobox(dialog, textvariable=direction_var, values=["payable", "receivable"], state="readonly").grid(row=1, column=1, padx=5, pady=5, sticky="w")
+
+        tk.Label(dialog, text="Counterparty", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=2, column=0, sticky="e", padx=5, pady=5)
+        entry_party = tk.Entry(dialog)
+        entry_party.grid(row=2, column=1, padx=5, pady=5)
+        entry_party.insert(0, "Supplier/Customer")
+
+        tk.Label(dialog, text="Amount", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=3, column=0, sticky="e", padx=5, pady=5)
+        entry_amt = tk.Entry(dialog)
+        entry_amt.grid(row=3, column=1, padx=5, pady=5)
+
+        tk.Label(dialog, text="Description", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=4, column=0, sticky="e", padx=5, pady=5)
+        entry_desc = tk.Entry(dialog, width=40)
+        entry_desc.grid(row=4, column=1, padx=5, pady=5)
+        entry_desc.insert(0, "What is this for?")
+
+        tk.Label(dialog, text="Due Date", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=5, column=0, sticky="e", padx=5, pady=5)
+        entry_due = tk.Entry(dialog)
+        entry_due.grid(row=5, column=1, padx=5, pady=5)
+        entry_due.insert(0, (datetime.date.today() + datetime.timedelta(days=30)).isoformat())
+
+        def save_invoice():
+            try:
+                amount_val = float(entry_amt.get())
+            except ValueError:
+                messagebox.showerror("Invalid", "Amount must be numeric")
+                return
+
+            direction = direction_var.get()
+            counterparty = entry_party.get() or ("Vendor" if direction == "payable" else "Customer")
+            if direction == "payable":
+                frm, to = counterparty, "Your Company"
+            else:
+                frm, to = "Your Company", counterparty
+
+            invoice = Invoice(
+                number=entry_num.get() or f"#{random.randint(4000, 9999)}",
+                from_company=frm,
+                to_company=to,
+                amount=amount_val,
+                description=entry_desc.get() or "General",
+                due_date=entry_due.get(),
+                direction=direction,
+            )
+
+            self.business_state.add_invoice(invoice)
+            self.refresh()
+            dialog.destroy()
+
+        tk.Button(dialog, text="Save", command=save_invoice, bg=COLOR_SUCCESS).grid(row=6, column=0, columnspan=2, sticky="ew", padx=5, pady=10)
 
     def refresh(self):
         if not all([self.lbl_cash, self.lbl_payables, self.lbl_receivables, self.table, self.activity]):
@@ -1103,67 +1168,6 @@ class DashboardApp(tk.Frame):
         if "inventory" in desc or "parts" in desc or "equipment" in desc:
             return "Cost of Goods Sold"
         return "Office Supplies"
-
-    def _setup_ui(self):
-        header = tk.Label(self, text="SPREADSHEET (Trial Balance Sandbox)", font=FONT_HEADER, bg=COLOR_PANEL, fg=COLOR_ACCENT)
-        header.pack(pady=8)
-
-        toolbar = tk.Frame(self, bg=COLOR_PANEL)
-        toolbar.pack(fill="x", padx=10)
-
-        tk.Button(toolbar, text="Add Row", command=self._open_add_row, bg=COLOR_ACCENT).pack(side="left", padx=5)
-        tk.Button(toolbar, text="Load From Ledger", command=self._load_from_ledger, bg=COLOR_SUCCESS).pack(side="left", padx=5)
-        tk.Button(toolbar, text="Clear", command=self._clear_rows, bg=COLOR_ERROR, fg="white").pack(side="left", padx=5)
-
-        columns = ("Period", "Account", "Debit", "Credit", "Notes")
-        self.table = ttk.Treeview(self, columns=columns, show="headings")
-        for col in columns:
-            self.table.heading(col, text=col)
-            self.table.column(col, width=140)
-        self.table.pack(fill="both", expand=True, padx=10, pady=10)
-
-        tip = "Use this sheet to rehearse entries or build monthly statements."
-        ToolTip(self.table, tip)
-
-    def _open_add_row(self):
-        dialog = tk.Toplevel(self)
-        dialog.title("Add Spreadsheet Row")
-        dialog.configure(bg=COLOR_PANEL)
-
-        labels = ["Period (YYYY-MM)", "Account", "Debit", "Credit", "Notes"]
-        entries = []
-        for i, text in enumerate(labels):
-            tk.Label(dialog, text=text, bg=COLOR_PANEL, fg=COLOR_FG).grid(row=i, column=0, padx=5, pady=5, sticky="e")
-            ent = tk.Entry(dialog)
-            ent.grid(row=i, column=1, padx=5, pady=5)
-            entries.append(ent)
-
-        entries[0].insert(0, datetime.date.today().strftime("%Y-%m"))
-
-        def add():
-            period, account, debit, credit, notes = [e.get() for e in entries]
-            self.rows.append({"Period": period, "Account": account, "Debit": debit, "Credit": credit, "Notes": notes})
-            self.table.insert("", tk.END, values=(period, account, debit, credit, notes))
-            dialog.destroy()
-
-        tk.Button(dialog, text="Insert", command=add, bg=COLOR_SUCCESS).grid(row=len(labels), column=0, columnspan=2, pady=10, sticky="ew")
-
-    def _load_from_ledger(self):
-        self._clear_rows()
-        balances = self.ledger.get_balances()
-        period = datetime.date.today().strftime("%Y-%m")
-        for account, amount in balances.items():
-            if abs(amount) < 0.01:
-                continue
-            debit = amount if amount > 0 else ""
-            credit = abs(amount) if amount < 0 else ""
-            self.rows.append({"Period": period, "Account": account, "Debit": debit, "Credit": credit, "Notes": "From ledger"})
-            self.table.insert("", tk.END, values=(period, account, debit, credit, "From ledger"))
-
-    def _clear_rows(self):
-        for row in self.table.get_children():
-            self.table.delete(row)
-        self.rows.clear()
 
 
 class SettingsApp(tk.Frame):
