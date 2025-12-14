@@ -6,6 +6,7 @@ import threading
 import requests
 import random
 import time
+import sys
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
@@ -472,7 +473,7 @@ class MessengerApp(tk.Frame):
         self._refresh_chat()
 
         # Thread the AI response so UI doesn't freeze
-        threading.Thread(target=self._get_ai_reply, args=(self.current_contact, msg)).start()
+        threading.Thread(target=self._get_ai_reply, args=(self.current_contact, msg), daemon=True).start()
 
     def _get_ai_reply(self, contact, user_msg):
         system_role = (
@@ -594,7 +595,11 @@ class AccountingApp(tk.Frame):
     def _setup_ui(self):
         # Notebook for Tabs
         style = ttk.Style()
-        style.theme_use('clam')
+        try:
+            style.theme_use('clam')
+        except tk.TclError:
+            # Fall back gracefully if the theme is unavailable instead of crashing the app
+            style.theme_use(style.theme_names()[0])
         
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True)
@@ -1207,6 +1212,9 @@ class SimulatorOS(tk.Tk):
         self.geometry("1100x700")
         self.configure(bg=COLOR_BG)
 
+        # Prevent hard crashes by surfacing unexpected Tk errors in a dialog and console
+        self.report_callback_exception = self._handle_callback_exception
+
         self.ledger = Ledger()
         self.business_state = BusinessState(self.ledger)
         
@@ -1225,6 +1233,17 @@ class SimulatorOS(tk.Tk):
         
         # Start Message Simulation Loop
         self.after(10000, self._random_event_trigger)
+
+    def _handle_callback_exception(self, exc, val, tb):
+        import traceback
+
+        stack = "".join(traceback.format_exception(exc, val, tb))
+        print(stack)
+        try:
+            messagebox.showerror("Unexpected Error", "A background action failed. Check the console for details.")
+        except tk.TclError:
+            # If UI is already closing, avoid raising another exception
+            pass
 
     def _init_apps(self):
         # We stack frames and just raise the one we want to see
@@ -1269,24 +1288,28 @@ class SimulatorOS(tk.Tk):
 
     def _random_event_trigger(self):
         """Simulates business events periodically"""
-        events = [
-            Invoice("#1002", "Landlord (Rent)", "Your Company", 1200.00, "Office rent - overdue", "Due in 7 days", direction="payable"),
-            Invoice("#5478", "Supplier (TechParts)", "Your Company", 200.00, "Keyboard shipment", "Net 30", direction="payable"),
-            ("Customer (BigCorp)", "We need an invoice for the consultation yesterday. $500."),
-            ("Boss", "I just bought a new coffee machine for the office using the company card ($150). Log it.")
-        ]
+        try:
+            events = [
+                Invoice("#1002", "Landlord (Rent)", "Your Company", 1200.00, "Office rent - overdue", "Due in 7 days", direction="payable"),
+                Invoice("#5478", "Supplier (TechParts)", "Your Company", 200.00, "Keyboard shipment", "Net 30", direction="payable"),
+                ("Customer (BigCorp)", "We need an invoice for the consultation yesterday. $500."),
+                ("Boss", "I just bought a new coffee machine for the office using the company card ($150). Log it."),
+            ]
 
-        if random.random() > 0.7: # 30% chance every 10 seconds
-            choice = random.choice(events)
-            if isinstance(choice, Invoice):
-                self.apps["Messenger"]._deliver_invoice(choice)
-            else:
-                contact, msg = choice
-                self.apps["Messenger"].receive_message(contact, msg)
-        self.refresh_dashboard()
-            
-        # Reschedule
-        self.after(10000, self._random_event_trigger)
+            if random.random() > 0.7:  # 30% chance every 10 seconds
+                choice = random.choice(events)
+                if isinstance(choice, Invoice):
+                    self.apps["Messenger"]._deliver_invoice(choice)
+                else:
+                    contact, msg = choice
+                    self.apps["Messenger"].receive_message(contact, msg)
+            self.refresh_dashboard()
+        except Exception:
+            # Surface errors via Tk's global handler; don't stop the scheduler
+            self.report_callback_exception(*sys.exc_info())
+        finally:
+            # Reschedule regardless of success
+            self.after(10000, self._random_event_trigger)
 
 if __name__ == "__main__":
     app = SimulatorOS()
