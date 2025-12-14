@@ -6,13 +6,14 @@ import threading
 import requests
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Dict, Optional
 
 # ==========================================
 # CONFIGURATION & CONSTANTS
 # ==========================================
 OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_HEALTH = "http://localhost:11434/api/tags"
 OLLAMA_MODEL = "llama3"  # Change to your installed model (e.g., 'mistral', 'llama2')
 
 FONT_MAIN = ("Consolas", 10)
@@ -51,6 +52,11 @@ class Ledger:
         self.entries: List[JournalEntry] = []
         self.entry_counter = 1
 
+    def reset(self):
+        """Reset the ledger to a clean state (used for tutorial/demo)."""
+        self.entries.clear()
+        self.entry_counter = 1
+
     def add_entry(self, date, description, debits, credits):
         # Validate Double Entry
         total_debit = sum(debits.values())
@@ -85,6 +91,22 @@ class Ledger:
 # ==========================================
 
 class AIHandler:
+    _is_online: Optional[bool] = None
+
+    @classmethod
+    def check_connection(cls) -> bool:
+        """Ping the Ollama tags endpoint to confirm availability."""
+        if cls._is_online is not None:
+            return cls._is_online
+
+        try:
+            resp = requests.get(OLLAMA_HEALTH, timeout=2)
+            resp.raise_for_status()
+            cls._is_online = True
+        except requests.exceptions.RequestException:
+            cls._is_online = False
+        return cls._is_online
+
     @staticmethod
     def generate_response(prompt, system_role="You are a helpful assistant."):
         """
@@ -113,6 +135,22 @@ class AIHandler:
             return "Good work. Keep the books balanced."
         else:
             return "I received your message."
+
+
+@dataclass
+class Invoice:
+    number: str
+    from_company: str
+    to_company: str
+    amount: float
+    description: str
+    due_date: str
+
+    def as_message(self) -> str:
+        return (
+            f"[INVOICE {self.number}] From: {self.from_company} To: {self.to_company} "
+            f"Amount: ${self.amount:,.2f} | Due: {self.due_date} | Details: {self.description}"
+        )
 
 # ==========================================
 # GUI: COMPONENTS & APPS
@@ -167,6 +205,7 @@ class MessengerApp(tk.Frame):
         }
         self.current_contact = "Boss"
         self.chat_history = {k: [] for k in self.contacts}
+        self.invoices: List[Invoice] = []
 
         self._setup_ui()
         self._inject_initial_messages()
@@ -175,7 +214,7 @@ class MessengerApp(tk.Frame):
         # Sidebar for contacts
         self.sidebar = tk.Frame(self, bg=COLOR_BG, width=150)
         self.sidebar.pack(side="left", fill="y")
-        
+
         lbl_contacts = tk.Label(self.sidebar, text="CONTACTS", bg=COLOR_BG, fg=COLOR_ACCENT, font=FONT_HEADER)
         lbl_contacts.pack(pady=10)
 
@@ -195,13 +234,19 @@ class MessengerApp(tk.Frame):
         self.msg_entry = tk.Entry(input_frame, bg="white", fg="black", font=FONT_MAIN)
         self.msg_entry.pack(side="left", fill="x", expand=True)
         self.msg_entry.bind("<Return>", self.send_message)
-        
+
         btn_send = tk.Button(input_frame, text="Send", command=self.send_message, bg=COLOR_ACCENT, fg="black")
         btn_send.pack(side="right", padx=5)
 
+        btn_invoice = tk.Button(input_frame, text="Send Invoice", command=self.compose_invoice, bg=COLOR_SUCCESS)
+        btn_invoice.pack(side="right", padx=5)
+
+        self.ai_status = tk.Label(self.sidebar, text=self._ai_status_text(), bg=COLOR_BG, fg=COLOR_FG, wraplength=120)
+        self.ai_status.pack(pady=5, padx=5)
+
     def _inject_initial_messages(self):
         self.receive_message("Boss", "Welcome to the team. Open the Academy app to learn the ropes.")
-        self.receive_message("Landlord (Rent)", "[INVOICE #1001] Amount: $1,200.00 for Office Rent.")
+        self._deliver_invoice(Invoice("#1001", "Northwind Properties", "Your Company", 1200.00, "Office Rent", "Due this month"))
 
     def switch_contact(self, contact):
         self.current_contact = contact
@@ -223,7 +268,7 @@ class MessengerApp(tk.Frame):
         self.msg_entry.delete(0, tk.END)
         self.chat_history[self.current_contact].append(("Me", msg))
         self._refresh_chat()
-        
+
         # Thread the AI response so UI doesn't freeze
         threading.Thread(target=self._get_ai_reply, args=(self.current_contact, msg)).start()
 
@@ -241,6 +286,61 @@ class MessengerApp(tk.Frame):
             self._refresh_chat()
         else:
             messagebox.showinfo("New Message", f"New message from {contact}")
+
+    def compose_invoice(self):
+        """Create and send a structured invoice to the current contact."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Send Invoice")
+        dialog.configure(bg=COLOR_PANEL)
+
+        tk.Label(dialog, text="Invoice #", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        entry_num = tk.Entry(dialog)
+        entry_num.grid(row=0, column=1, padx=5, pady=5)
+        entry_num.insert(0, f"#{random.randint(2000, 9999)}")
+
+        tk.Label(dialog, text="Amount", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=1, column=0, padx=5, pady=5, sticky="e")
+        entry_amt = tk.Entry(dialog)
+        entry_amt.grid(row=1, column=1, padx=5, pady=5)
+
+        tk.Label(dialog, text="Description", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=2, column=0, padx=5, pady=5, sticky="e")
+        entry_desc = tk.Entry(dialog, width=40)
+        entry_desc.grid(row=2, column=1, padx=5, pady=5)
+
+        tk.Label(dialog, text="Due Date", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=3, column=0, padx=5, pady=5, sticky="e")
+        entry_due = tk.Entry(dialog)
+        entry_due.grid(row=3, column=1, padx=5, pady=5)
+        entry_due.insert(0, (datetime.date.today() + datetime.timedelta(days=30)).isoformat())
+
+        def send():
+            try:
+                invoice = Invoice(
+                    number=entry_num.get(),
+                    from_company="Your Company",
+                    to_company=self.current_contact,
+                    amount=float(entry_amt.get()),
+                    description=entry_desc.get() or "Services rendered",
+                    due_date=entry_due.get(),
+                )
+            except ValueError:
+                messagebox.showerror("Invalid", "Amount must be numeric")
+                return
+
+            self.invoices.append(invoice)
+            self.chat_history[self.current_contact].append(("Me", invoice.as_message()))
+            self._refresh_chat()
+            dialog.destroy()
+
+        tk.Button(dialog, text="Send", command=send, bg=COLOR_SUCCESS).grid(row=4, column=0, columnspan=2, pady=10, sticky="ew")
+
+    def _deliver_invoice(self, invoice: Invoice):
+        self.invoices.append(invoice)
+        self.receive_message(invoice.from_company if invoice.from_company in self.contacts else "Supplier (TechParts)", invoice.as_message())
+
+    def _ai_status_text(self):
+        online = AIHandler.check_connection()
+        if online:
+            return "AI: Connected to Ollama"
+        return "AI: Using mock replies (start Ollama at localhost:11434 for full experience)."
 
 class AccountingApp(tk.Frame):
     def __init__(self, parent, ledger):
@@ -331,13 +431,15 @@ class AccountingApp(tk.Frame):
 
     def _refresh_ledger_display(self):
         self.ledger_text.delete(1.0, tk.END)
-        self.ledger_text.insert(tk.END, f"{'ID':<5} {'DATE':<12} {'DESCRIPTION':<30} {'ACCOUNT':<20} {'DEBIT':<10} {'CREDIT':<10}\n")
+        header = f"{'ID':<5} {'DATE':<12} {'DESCRIPTION':<30} {'ACCOUNT':<20} {'DEBIT':<10} {'CREDIT':<10}\n"
+        self.ledger_text.insert(tk.END, header)
         self.ledger_text.insert(tk.END, "-"*90 + "\n")
-        
+
         for entry in self.ledger.entries:
             # Print Debit line
             for acc, amt in entry.debits.items():
-                self.ledger_text.insert(tk.END, f"{entry.id:<5} {entry.date:<12} {entry.description:<30} {acc:<20} {amt:<10.2f} {'':<10}\n")
+                line = f"{entry.id:<5} {entry.date:<12} {entry.description:<30} {acc:<20} {amt:<10.2f} {'':<10}\n"
+                self.ledger_text.insert(tk.END, line)
             # Print Credit line
             for acc, amt in entry.credits.items():
                 self.ledger_text.insert(tk.END, f"{'':<5} {'':<12} {'':<30} {acc:<20} {'':<10} {amt:<10.2f}\n")
@@ -391,44 +493,132 @@ class GuideApp(tk.Frame):
         tutorial = """
         WELCOME TO THE BOOKKEEPING SIMULATOR
         ====================================
-        
+
         CORE CONCEPTS:
         1. Double-Entry Accounting:
            Every transaction affects at least two accounts.
            DEBITS must always equal CREDITS.
-        
+
         2. The Accounting Equation:
            Assets = Liabilities + Owner's Equity
-        
+
         CHEAT SHEET:
         - ASSETS (Cash, Inventory):     Increase with DEBIT, Decrease with CREDIT
         - EXPENSES (Rent, Wages):       Increase with DEBIT, Decrease with CREDIT
         - LIABILITIES (Payables):       Increase with CREDIT, Decrease with DEBIT
         - REVENUE (Sales):              Increase with CREDIT, Decrease with DEBIT
         - EQUITY:                       Increase with CREDIT, Decrease with DEBIT
-        
-        SCENARIOS:
-        
+
+        CHART OF ACCOUNTS WALKTHROUGH:
+        Assets -> what the business owns (cash, receivables, inventory, equipment)
+        Liabilities -> what the business owes (accounts payable, taxes, notes)
+        Equity -> owner's stake (capital, retained earnings)
+        Revenue -> sales or service income
+        Expenses -> costs to operate (rent, wages, supplies)
+
+        MONTH-END CHECKLIST:
+        - Reconcile bank/cash balances.
+        - Post all invoices and bills.
+        - Run Profit & Loss and Balance Sheet.
+        - Prepare Accounts Receivable/Payable aging.
+        - Close the books and roll retained earnings.
+
+        SCENARIOS (PRACTICE ENTRIES):
+
         A) Received a Bill for Rent ($1000)?
-           -> This is an Expense (Rent) and a Liability (Accounts Payable).
+           -> Expense (Rent) and Liability (Accounts Payable).
            ENTRY:
            Debit: Rent Expense     $1000
            Credit: Accounts Payable $1000
-        
+
         B) Paid the Bill?
            -> You lose Cash (Asset) and remove the Liability.
            ENTRY:
            Debit: Accounts Payable $1000
            Credit: Cash             $1000
-           
+
         C) Sent an Invoice to a customer?
            -> You earned Revenue, but haven't got cash yet (Accounts Receivable).
            ENTRY:
            Debit: Accounts Receivable
            Credit: Sales Revenue
+
+        D) Monthly financial statements:
+           Profit & Loss (performance), Balance Sheet (position),
+           and optionally Cash Flow (liquidity). Run them after posting all
+           journal entries and adjusting inventory/depreciation as needed.
         """
         text_area.insert(tk.END, tutorial)
         text_area.config(state="disabled")
+
+
+class SpreadsheetApp(tk.Frame):
+    def __init__(self, parent, ledger: Ledger):
+        super().__init__(parent, bg=COLOR_PANEL)
+        self.ledger = ledger
+        self.rows: List[Dict[str, str]] = []
+        self._setup_ui()
+
+    def _setup_ui(self):
+        header = tk.Label(self, text="SPREADSHEET (Trial Balance Sandbox)", font=FONT_HEADER, bg=COLOR_PANEL, fg=COLOR_ACCENT)
+        header.pack(pady=8)
+
+        toolbar = tk.Frame(self, bg=COLOR_PANEL)
+        toolbar.pack(fill="x", padx=10)
+
+        tk.Button(toolbar, text="Add Row", command=self._open_add_row, bg=COLOR_ACCENT).pack(side="left", padx=5)
+        tk.Button(toolbar, text="Load From Ledger", command=self._load_from_ledger, bg=COLOR_SUCCESS).pack(side="left", padx=5)
+        tk.Button(toolbar, text="Clear", command=self._clear_rows, bg=COLOR_ERROR, fg="white").pack(side="left", padx=5)
+
+        columns = ("Period", "Account", "Debit", "Credit", "Notes")
+        self.table = ttk.Treeview(self, columns=columns, show="headings")
+        for col in columns:
+            self.table.heading(col, text=col)
+            self.table.column(col, width=140)
+        self.table.pack(fill="both", expand=True, padx=10, pady=10)
+
+        tip = "Use this sheet to rehearse entries or build monthly statements."
+        ToolTip(self.table, tip)
+
+    def _open_add_row(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("Add Spreadsheet Row")
+        dialog.configure(bg=COLOR_PANEL)
+
+        labels = ["Period (YYYY-MM)", "Account", "Debit", "Credit", "Notes"]
+        entries = []
+        for i, text in enumerate(labels):
+            tk.Label(dialog, text=text, bg=COLOR_PANEL, fg=COLOR_FG).grid(row=i, column=0, padx=5, pady=5, sticky="e")
+            ent = tk.Entry(dialog)
+            ent.grid(row=i, column=1, padx=5, pady=5)
+            entries.append(ent)
+
+        entries[0].insert(0, datetime.date.today().strftime("%Y-%m"))
+
+        def add():
+            period, account, debit, credit, notes = [e.get() for e in entries]
+            self.rows.append({"Period": period, "Account": account, "Debit": debit, "Credit": credit, "Notes": notes})
+            self.table.insert("", tk.END, values=(period, account, debit, credit, notes))
+            dialog.destroy()
+
+        tk.Button(dialog, text="Insert", command=add, bg=COLOR_SUCCESS).grid(row=len(labels), column=0, columnspan=2, pady=10, sticky="ew")
+
+    def _load_from_ledger(self):
+        self._clear_rows()
+        balances = self.ledger.get_balances()
+        period = datetime.date.today().strftime("%Y-%m")
+        for account, amount in balances.items():
+            if abs(amount) < 0.01:
+                continue
+            debit = amount if amount > 0 else ""
+            credit = abs(amount) if amount < 0 else ""
+            self.rows.append({"Period": period, "Account": account, "Debit": debit, "Credit": credit, "Notes": "From ledger"})
+            self.table.insert("", tk.END, values=(period, account, debit, credit, "From ledger"))
+
+    def _clear_rows(self):
+        for row in self.table.get_children():
+            self.table.delete(row)
+        self.rows.clear()
 
 # ==========================================
 # MAIN SIMULATOR (OS INTERFACE)
@@ -463,6 +653,7 @@ class SimulatorOS(tk.Tk):
         # We stack frames and just raise the one we want to see
         self.apps["Messenger"] = MessengerApp(self.main_area, self)
         self.apps["Accounting"] = AccountingApp(self.main_area, self.ledger)
+        self.apps["Spreadsheet"] = SpreadsheetApp(self.main_area, self.ledger)
         self.apps["Academy"] = GuideApp(self.main_area)
         
         for app in self.apps.values():
@@ -485,20 +676,24 @@ class SimulatorOS(tk.Tk):
         btn_exit.pack(side="bottom", pady=20)
 
     def open_app(self, app_name):
-        self.apps[app_name].raise_tkraise()
+        self.apps[app_name].tkraise()
 
     def _random_event_trigger(self):
         """Simulates business events periodically"""
         events = [
-            ("Landlord (Rent)", "Urgent: Rent is overdue. Please log invoice #1002 immediately."),
+            Invoice("#1002", "Landlord (Rent)", "Your Company", 1200.00, "Office rent - overdue", "Due in 7 days"),
+            Invoice("#5478", "Supplier (TechParts)", "Your Company", 200.00, "Keyboard shipment", "Net 30"),
             ("Customer (BigCorp)", "We need an invoice for the consultation yesterday. $500."),
-            ("Supplier (TechParts)", "New shipment of keyboards arrived. Invoice attached $200."),
             ("Boss", "I just bought a new coffee machine for the office using the company card ($150). Log it.")
         ]
-        
+
         if random.random() > 0.7: # 30% chance every 10 seconds
-            contact, msg = random.choice(events)
-            self.apps["Messenger"].receive_message(contact, msg)
+            choice = random.choice(events)
+            if isinstance(choice, Invoice):
+                self.apps["Messenger"]._deliver_invoice(choice)
+            else:
+                contact, msg = choice
+                self.apps["Messenger"].receive_message(contact, msg)
             
         # Reschedule
         self.after(10000, self._random_event_trigger)
