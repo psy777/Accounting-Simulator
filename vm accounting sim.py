@@ -106,6 +106,10 @@ class OllamaSettings:
         return cls._normalize_endpoint(cls.raw_url, "generate")
 
     @classmethod
+    def chat_endpoint(cls) -> str:
+        return cls._normalize_endpoint(cls.raw_url, "chat")
+
+    @classmethod
     def health_endpoint(cls) -> str:
         return cls._normalize_endpoint(cls.raw_health, "tags")
 
@@ -140,6 +144,8 @@ class OllamaSettings:
 class AIHandler:
     _is_online: Optional[bool] = None
     last_error: Optional[str] = None
+    last_endpoint: Optional[str] = None
+    last_mode: Optional[str] = None  # "generate" or "chat"
 
     @classmethod
     def check_connection(cls) -> bool:
@@ -147,49 +153,134 @@ class AIHandler:
         if cls._is_online is not None:
             return cls._is_online
 
+        cls._probe_connectivity()
+        return cls._is_online or False
+
+    @classmethod
+    def _probe_connectivity(cls):
+        cls._is_online = False
+        cls.last_endpoint = None
+        cls.last_mode = None
+
+        ping_prompt = "ping"
+        if cls._try_generate(ping_prompt, system_role="You are a helpful assistant.", timeout=3):
+            return
+        cls._try_chat(ping_prompt, system_role="You are a helpful assistant.", timeout=3)
+
+    @classmethod
+    def _try_generate(cls, prompt: str, system_role: str, timeout: int = 5) -> bool:
+        payload = {
+            "model": OllamaSettings.model,
+            "prompt": prompt,
+            "stream": False,
+        }
         try:
-            payload = {
-                "model": OllamaSettings.model,
-                "prompt": "ping",
-                "stream": False,
-            }
-            resp = requests.post(OllamaSettings.generate_endpoint(), json=payload, timeout=3)
+            resp = requests.post(OllamaSettings.generate_endpoint(), json=payload, timeout=timeout)
             resp.raise_for_status()
             data = resp.json()
             if data.get("response") is None:
                 raise requests.exceptions.RequestException("No response text returned from Ollama.")
             cls.last_error = None
             cls._is_online = True
+            cls.last_endpoint = OllamaSettings.generate_endpoint()
+            cls.last_mode = "generate"
+            return True
         except requests.exceptions.RequestException as exc:
             cls.last_error = str(exc)
             cls._is_online = False
-        return cls._is_online
+            return False
+
+    @classmethod
+    def _try_chat(cls, prompt: str, system_role: str, timeout: int = 5) -> bool:
+        payload = {
+            "model": OllamaSettings.model,
+            "messages": [
+                {"role": "system", "content": system_role},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+        }
+        try:
+            resp = requests.post(OllamaSettings.chat_endpoint(), json=payload, timeout=timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            content = None
+            if isinstance(data, dict):
+                content = data.get("message", {}).get("content") or data.get("response")
+            if not content:
+                raise requests.exceptions.RequestException("No response text returned from Ollama chat.")
+            cls.last_error = None
+            cls._is_online = True
+            cls.last_endpoint = OllamaSettings.chat_endpoint()
+            cls.last_mode = "chat"
+            return True
+        except requests.exceptions.RequestException as exc:
+            cls.last_error = str(exc)
+            cls._is_online = False
+            return False
 
     @classmethod
     def reset_status(cls):
         cls._is_online = None
         cls.last_error = None
+        cls.last_endpoint = None
+        cls.last_mode = None
 
     @staticmethod
     def generate_response(prompt, system_role="You are a helpful assistant."):
         """
         Connects to local Ollama instance. Falls back to mock if connection fails.
         """
-        payload = {
-            "model": OllamaSettings.model,
-            "prompt": prompt,
-            "system": system_role,
-            "stream": False
-        }
-        try:
-            response = requests.post(OllamaSettings.generate_endpoint(), json=payload, timeout=5)
-            response.raise_for_status()
-            data = response.json()
-            AIHandler.last_error = None
-            return data.get("response", "Error parsing AI response.")
-        except requests.exceptions.RequestException as exc:
-            AIHandler.last_error = str(exc)
-            return AIHandler._mock_response(prompt, system_role)
+        combined_prompt = prompt_with_system(prompt, system_role)
+
+        # Prefer generate; fall back to chat if generate fails (e.g., due to endpoint choice)
+        if AIHandler._try_generate(combined_prompt, system_role):
+            # _try_generate already recorded state; fetch last response again for real message
+            try:
+                response = requests.post(
+                    OllamaSettings.generate_endpoint(),
+                    json={"model": OllamaSettings.model, "prompt": combined_prompt, "stream": False},
+                    timeout=10,
+                )
+                response.raise_for_status()
+                data = response.json()
+                AIHandler.last_error = None
+                return data.get("response", "Error parsing AI response.")
+            except requests.exceptions.RequestException as exc:
+                AIHandler.last_error = str(exc)
+
+        if AIHandler._try_chat(prompt, system_role):
+            try:
+                response = requests.post(
+                    OllamaSettings.chat_endpoint(),
+                    json={
+                        "model": OllamaSettings.model,
+                        "messages": [
+                            {"role": "system", "content": system_role},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "stream": False,
+                    },
+                    timeout=10,
+                )
+                response.raise_for_status()
+                data = response.json()
+                AIHandler.last_error = None
+                return (data.get("message", {}) or {}).get("content") or data.get("response", "Error parsing AI response.")
+            except requests.exceptions.RequestException as exc:
+                AIHandler.last_error = str(exc)
+
+        AIHandler._is_online = False
+        return AIHandler._mock_response(prompt, system_role)
+
+
+def prompt_with_system(user_prompt: str, system_role: str) -> str:
+    """Combine system and user instructions into a single prompt for /generate."""
+    return (
+        f"System instructions: {system_role}\n"
+        f"User message: {user_prompt}\n"
+        "Assistant response:"
+    )
 
     @staticmethod
     def _mock_response(prompt, role):
@@ -436,9 +527,11 @@ class MessengerApp(tk.Frame):
     def _ai_status_text(self):
         online = AIHandler.check_connection()
         if online:
-            return "AI: Connected to Ollama"
+            endpoint = AIHandler.last_endpoint or OllamaSettings.generate_endpoint()
+            mode = AIHandler.last_mode or "generate"
+            return f"AI: Connected via {mode} at {endpoint}"
         suffix = f" (error: {AIHandler.last_error})" if AIHandler.last_error else ""
-        return f"AI: Using mock replies (start Ollama at localhost:11434 for full experience){suffix}."
+        return f"AI: Using mock replies; start Ollama and click Settings > Check Connection{suffix}."
 
 class AccountingApp(tk.Frame):
     def __init__(self, parent, ledger):
@@ -769,11 +862,16 @@ class SettingsApp(tk.Frame):
         def worker():
             AIHandler.reset_status()
             online = AIHandler.check_connection()
-            status = (
-                f"Connected to Ollama at {OllamaSettings.generate_endpoint()} (based on '{OllamaSettings.raw_url}')."
-                if online
-                else f"Could not reach Ollama. Last error: {AIHandler.last_error or 'unknown'}. Using mock replies."
-            )
+            endpoint = AIHandler.last_endpoint or OllamaSettings.generate_endpoint()
+            mode = AIHandler.last_mode or "generate"
+            if online:
+                status = (
+                    f"Connected to Ollama at {endpoint} using {mode} (from '{OllamaSettings.raw_url}')."
+                )
+            else:
+                status = (
+                    f"Could not reach Ollama at {endpoint}. Last error: {AIHandler.last_error or 'unknown'}."
+                )
             self.after(0, lambda: self.status_var.set(prefix + status))
             if online:
                 self.after(0, self.controller.refresh_ai_status)
