@@ -227,6 +227,11 @@ class MessengerApp(tk.Frame):
         self.chat_area = scrolledtext.ScrolledText(self, state="disabled", bg=COLOR_PANEL, fg=COLOR_FG, font=FONT_MAIN)
         self.chat_area.pack(side="top", fill="both", expand=True, padx=10, pady=10)
 
+        # Soft notification banner for unseen messages
+        self.banner_var = tk.StringVar(value="")
+        self.banner_label = tk.Label(self, textvariable=self.banner_var, bg=COLOR_PANEL, fg=COLOR_WARNING, font=FONT_MAIN)
+        self.banner_label.pack(fill="x", padx=10)
+
         # Input Area
         input_frame = tk.Frame(self, bg=COLOR_PANEL)
         input_frame.pack(side="bottom", fill="x", padx=10, pady=10)
@@ -260,6 +265,7 @@ class MessengerApp(tk.Frame):
             self.chat_area.insert(tk.END, f"{sender}: {msg}\n\n", tag)
         self.chat_area.config(state="disabled")
         self.chat_area.yview(tk.END)
+        self.banner_var.set("")
 
     def send_message(self, event=None):
         msg = self.msg_entry.get()
@@ -285,7 +291,7 @@ class MessengerApp(tk.Frame):
         if self.current_contact == contact:
             self._refresh_chat()
         else:
-            messagebox.showinfo("New Message", f"New message from {contact}")
+            self.banner_var.set(f"New message from {contact}. Open their chat to view.")
 
     def compose_invoice(self):
         """Create and send a structured invoice to the current contact."""
