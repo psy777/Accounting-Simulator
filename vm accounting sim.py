@@ -943,6 +943,10 @@ class DashboardApp(tk.Frame):
     def __init__(self, parent, business_state: BusinessState):
         super().__init__(parent, bg=COLOR_PANEL)
         self.business_state = business_state
+        # Pre-initialize label references so refresh can safely run even if UI wiring fails early.
+        self.lbl_cash: Optional[tk.Label] = None
+        self.lbl_payables: Optional[tk.Label] = None
+        self.lbl_receivables: Optional[tk.Label] = None
         self._setup_ui()
         self.refresh()
 
@@ -983,6 +987,10 @@ class DashboardApp(tk.Frame):
         self.activity.config(state="disabled")
 
     def refresh(self):
+        if not all([self.lbl_cash, self.lbl_payables, self.lbl_receivables]):
+            # If the UI failed to initialize fully, avoid crashing the simulator.
+            return
+
         self.lbl_cash.config(text=f"Cash: ${self.business_state.cash_balance:,.0f}")
         self.lbl_payables.config(text=f"Payables: {len(self.business_state.outstanding('payable'))}")
         self.lbl_receivables.config(text=f"Receivables: {len(self.business_state.outstanding('receivable'))}")
