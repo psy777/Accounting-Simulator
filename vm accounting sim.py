@@ -802,6 +802,109 @@ class SpreadsheetApp(tk.Frame):
         self.rows: List[Dict[str, str]] = []
         self._setup_ui()
 
+    def _setup_ui(self):
+        header = tk.Label(self, text="SPREADSHEET WORKPAD", font=FONT_HEADER, bg=COLOR_PANEL, fg=COLOR_ACCENT)
+        header.pack(pady=8)
+
+        form = tk.Frame(self, bg=COLOR_PANEL)
+        form.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(form, text="Description", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=0, column=0, sticky="e")
+        self.entry_desc = tk.Entry(form, width=40)
+        self.entry_desc.insert(0, "Quick adjustment or batch entry")
+        self.entry_desc.grid(row=0, column=1, columnspan=3, padx=5, pady=4, sticky="w")
+
+        tk.Label(form, text="Account", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=1, column=0, sticky="e")
+        self.combo_account = ttk.Combobox(form, values=ChartOfAccounts.ALL_ACCOUNTS, width=28)
+        self.combo_account.grid(row=1, column=1, padx=5, pady=4, sticky="w")
+
+        tk.Label(form, text="Debit $", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=1, column=2, sticky="e")
+        self.entry_debit = tk.Entry(form, width=10)
+        self.entry_debit.grid(row=1, column=3, padx=5, pady=4, sticky="w")
+
+        tk.Label(form, text="Credit $", bg=COLOR_PANEL, fg=COLOR_FG).grid(row=1, column=4, sticky="e")
+        self.entry_credit = tk.Entry(form, width=10)
+        self.entry_credit.grid(row=1, column=5, padx=5, pady=4, sticky="w")
+
+        tk.Button(form, text="Add Line", command=self._add_line, bg=COLOR_SUCCESS).grid(row=1, column=6, padx=5)
+        tk.Button(form, text="Clear", command=self._clear_lines, bg=COLOR_WARNING).grid(row=1, column=7, padx=5)
+
+        columns = ("Description", "Account", "Debit", "Credit")
+        self.table = ttk.Treeview(self, columns=columns, show="headings", height=12)
+        for col in columns:
+            self.table.heading(col, text=col)
+            self.table.column(col, width=180 if col == "Description" else 120)
+        self.table.pack(fill="both", expand=True, padx=10, pady=5)
+
+        tk.Button(self, text="Post to Ledger", command=self._post_batch, bg=COLOR_ACCENT).pack(pady=8)
+
+        hint = ("Use the workpad to build multi-line journal entries. Enter one debit or credit per line; "
+                "totals must balance before posting.")
+        tk.Label(self, text=hint, wraplength=800, bg=COLOR_PANEL, fg=COLOR_FG, font=("Consolas", 9)).pack(pady=(0, 10))
+
+    def _add_line(self):
+        account = self.combo_account.get()
+        desc = self.entry_desc.get() or "Spreadsheet entry"
+        debit_txt = self.entry_debit.get().strip()
+        credit_txt = self.entry_credit.get().strip()
+
+        if not account:
+            messagebox.showerror("Missing", "Choose an account before adding a line.")
+            return
+
+        try:
+            debit = float(debit_txt) if debit_txt else 0.0
+            credit = float(credit_txt) if credit_txt else 0.0
+        except ValueError:
+            messagebox.showerror("Invalid", "Debit/Credit must be numeric.")
+            return
+
+        if debit and credit:
+            messagebox.showerror("Unbalanced", "Enter either a debit or credit amount, not both.")
+            return
+        if not debit and not credit:
+            messagebox.showerror("Empty", "Provide a debit or credit amount.")
+            return
+
+        line = {"description": desc, "account": account, "debit": debit, "credit": credit}
+        self.rows.append(line)
+        self.table.insert("", tk.END, values=(desc, account, f"${debit:,.2f}" if debit else "", f"${credit:,.2f}" if credit else ""))
+        self.combo_account.set("")
+        self.entry_debit.delete(0, tk.END)
+        self.entry_credit.delete(0, tk.END)
+
+    def _clear_lines(self):
+        self.rows.clear()
+        for row in self.table.get_children():
+            self.table.delete(row)
+
+    def _post_batch(self):
+        if not self.rows:
+            messagebox.showwarning("No lines", "Add at least one line before posting.")
+            return
+
+        debits: Dict[str, float] = {}
+        credits: Dict[str, float] = {}
+        for line in self.rows:
+            if line["debit"]:
+                debits[line["account"]] = debits.get(line["account"], 0.0) + line["debit"]
+            if line["credit"]:
+                credits[line["account"]] = credits.get(line["account"], 0.0) + line["credit"]
+
+        try:
+            self.ledger.add_entry(
+                datetime.date.today().strftime("%Y-%m-%d"),
+                self.entry_desc.get() or "Spreadsheet batch",
+                debits,
+                credits,
+            )
+        except ValueError as exc:
+            messagebox.showerror("Unbalanced", str(exc))
+            return
+
+        messagebox.showinfo("Posted", "Batch posted to the ledger.")
+        self._clear_lines()
+
 
 class DashboardApp(tk.Frame):
     def __init__(self, parent, business_state: BusinessState):
