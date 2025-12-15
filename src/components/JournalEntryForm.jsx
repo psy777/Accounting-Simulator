@@ -12,53 +12,40 @@ import {
   Grid,
   Alert,
   Box,
-  InputAdornment
+  InputAdornment,
 } from '@mui/material'
 import { DatePicker } from '@mui/x-date-pickers'
 import { Save as SaveIcon } from '@mui/icons-material'
 import dayjs from 'dayjs'
-import { 
-  getAccountsFromStorage, 
-  getJournalEntriesFromStorage, 
-  saveJournalEntriesToStorage 
-} from '../data/accounts'
+import { useGame } from '../GameContext'
 
 function JournalEntryForm() {
+  const { state, addJournalEntry } = useGame()
   const [accounts, setAccounts] = useState([])
   const [formData, setFormData] = useState({
     date: dayjs(),
     description: '',
     debitAccount: '',
     creditAccount: '',
-    amount: ''
+    amount: '',
   })
   const [alert, setAlert] = useState({ show: false, message: '', severity: 'success' })
 
   useEffect(() => {
-    setAccounts(getAccountsFromStorage())
-    
-    const handleAccountsUpdate = () => {
-      setAccounts(getAccountsFromStorage())
-    }
-    
-    window.addEventListener('accountsUpdated', handleAccountsUpdate)
-    
-    return () => {
-      window.removeEventListener('accountsUpdated', handleAccountsUpdate)
-    }
-  }, [])
+    setAccounts(state.accounts)
+  }, [state.accounts])
 
   const handleInputChange = (field) => (event) => {
     setFormData({
       ...formData,
-      [field]: event.target.value
+      [field]: event.target.value,
     })
   }
 
   const handleDateChange = (newDate) => {
     setFormData({
       ...formData,
-      date: newDate
+      date: newDate,
     })
   }
 
@@ -95,55 +82,40 @@ function JournalEntryForm() {
 
   const handleSubmit = (event) => {
     event.preventDefault()
-    
+
     if (!validateForm()) return
 
-    const newEntry = {
-      id: Date.now().toString(),
+    addJournalEntry({
       date: formData.date.format('YYYY-MM-DD'),
       description: formData.description.trim(),
       debitAccount: formData.debitAccount,
       creditAccount: formData.creditAccount,
-      amount: parseFloat(formData.amount)
-    }
-
-    const currentEntries = getJournalEntriesFromStorage()
-    const updatedEntries = [...currentEntries, newEntry]
-    saveJournalEntriesToStorage(updatedEntries)
+      amount: parseFloat(formData.amount),
+    })
 
     showAlert('Journal entry added successfully!', 'success')
-    
-    // Reset form
+
     setFormData({
       date: dayjs(),
       description: '',
       debitAccount: '',
       creditAccount: '',
-      amount: ''
+      amount: '',
     })
   }
 
-  const getAccountDisplay = (account) => {
-    return `${account.code} - ${account.name}`
-  }
+  const getAccountDisplay = (account) => `${account.code} - ${account.name}`
 
   return (
     <Card>
-      <CardHeader
-        title="Add New Journal Entry"
-        titleTypographyProps={{ variant: 'h5', fontWeight: 600 }}
-      />
+      <CardHeader title="Add New Journal Entry" titleTypographyProps={{ variant: 'h5', fontWeight: 600 }} />
       <CardContent>
         {alert.show && (
-          <Alert 
-            severity={alert.severity} 
-            sx={{ mb: 2 }}
-            onClose={() => setAlert({ ...alert, show: false })}
-          >
+          <Alert severity={alert.severity} sx={{ mb: 2 }} onClose={() => setAlert({ ...alert, show: false })}>
             {alert.message}
           </Alert>
         )}
-        
+
         <Box component="form" onSubmit={handleSubmit}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={6}>
@@ -154,12 +126,12 @@ function JournalEntryForm() {
                 slotProps={{
                   textField: {
                     fullWidth: true,
-                    required: true
-                  }
+                    required: true,
+                  },
                 }}
               />
             </Grid>
-            
+
             <Grid item xs={12}>
               <TextField
                 fullWidth
@@ -172,15 +144,11 @@ function JournalEntryForm() {
                 placeholder="Enter transaction description..."
               />
             </Grid>
-            
+
             <Grid item xs={12} md={6}>
               <FormControl fullWidth required>
                 <InputLabel>Debit Account</InputLabel>
-                <Select
-                  value={formData.debitAccount}
-                  label="Debit Account"
-                  onChange={handleInputChange('debitAccount')}
-                >
+                <Select value={formData.debitAccount} label="Debit Account" onChange={handleInputChange('debitAccount')}>
                   {accounts.map((account) => (
                     <MenuItem key={account.code} value={account.code}>
                       {getAccountDisplay(account)}
@@ -189,15 +157,11 @@ function JournalEntryForm() {
                 </Select>
               </FormControl>
             </Grid>
-            
+
             <Grid item xs={12} md={6}>
               <FormControl fullWidth required>
                 <InputLabel>Credit Account</InputLabel>
-                <Select
-                  value={formData.creditAccount}
-                  label="Credit Account"
-                  onChange={handleInputChange('creditAccount')}
-                >
+                <Select value={formData.creditAccount} label="Credit Account" onChange={handleInputChange('creditAccount')}>
                   {accounts.map((account) => (
                     <MenuItem key={account.code} value={account.code}>
                       {getAccountDisplay(account)}
@@ -206,7 +170,7 @@ function JournalEntryForm() {
                 </Select>
               </FormControl>
             </Grid>
-            
+
             <Grid item xs={12} md={6}>
               <TextField
                 fullWidth
@@ -221,15 +185,9 @@ function JournalEntryForm() {
                 }}
               />
             </Grid>
-            
+
             <Grid item xs={12}>
-              <Button
-                type="submit"
-                variant="contained"
-                size="large"
-                startIcon={<SaveIcon />}
-                sx={{ mt: 2 }}
-              >
+              <Button type="submit" variant="contained" size="large" startIcon={<SaveIcon />} sx={{ mt: 2 }}>
                 Add Journal Entry
               </Button>
             </Grid>
@@ -240,4 +198,4 @@ function JournalEntryForm() {
   )
 }
 
-export default JournalEntryForm 
+export default JournalEntryForm
