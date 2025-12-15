@@ -17,61 +17,39 @@ import {
   TableCell,
   TableContainer,
   TableHead,
-  TableRow
+  TableRow,
 } from '@mui/material'
-import { 
-  getAccountsFromStorage, 
-  getJournalEntriesFromStorage,
-  NORMAL_BALANCES 
-} from '../data/accounts'
+import { NORMAL_BALANCES } from '../data/accounts'
+import { useGame } from '../GameContext'
 
 function TAccountsView() {
-  const [accounts, setAccounts] = useState([])
-  const [entries, setEntries] = useState([])
+  const { state } = useGame()
   const [selectedAccount, setSelectedAccount] = useState('')
   const [accountTransactions, setAccountTransactions] = useState([])
 
   useEffect(() => {
-    setAccounts(getAccountsFromStorage())
-    setEntries(getJournalEntriesFromStorage())
-    
-    const handleAccountsUpdate = () => {
-      setAccounts(getAccountsFromStorage())
-    }
-    
-    window.addEventListener('accountsUpdated', handleAccountsUpdate)
-    
-    return () => {
-      window.removeEventListener('accountsUpdated', handleAccountsUpdate)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (selectedAccount && entries.length > 0) {
+    if (selectedAccount && state.journalEntries.length > 0) {
       calculateAccountTransactions()
+    } else {
+      setAccountTransactions([])
     }
-  }, [selectedAccount, entries])
+  }, [selectedAccount, state.journalEntries, state.accounts])
 
   const calculateAccountTransactions = () => {
-    const account = accounts.find(acc => acc.code === selectedAccount)
+    const account = state.accounts.find((acc) => acc.code === selectedAccount)
     if (!account) return
 
     const transactions = []
     let runningBalance = 0
 
-    // Filter entries that affect this account
-    const relevantEntries = entries
-      .filter(entry => 
-        entry.debitAccount === selectedAccount || 
-        entry.creditAccount === selectedAccount
-      )
+    const relevantEntries = state.journalEntries
+      .filter((entry) => entry.debitAccount === selectedAccount || entry.creditAccount === selectedAccount)
       .sort((a, b) => new Date(a.date) - new Date(b.date))
 
-    relevantEntries.forEach(entry => {
+    relevantEntries.forEach((entry) => {
       const isDebit = entry.debitAccount === selectedAccount
       const amount = entry.amount
 
-      // Calculate running balance based on normal balance of account
       if (NORMAL_BALANCES[account.type] === 'debit') {
         runningBalance += isDebit ? amount : -amount
       } else {
@@ -81,65 +59,40 @@ function TAccountsView() {
       transactions.push({
         ...entry,
         side: isDebit ? 'debit' : 'credit',
-        amount: amount,
-        runningBalance: runningBalance
+        amount,
+        runningBalance,
       })
     })
 
     setAccountTransactions(transactions)
   }
 
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(Math.abs(amount))
-  }
+  const formatCurrency = (amount) =>
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Math.abs(amount))
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    })
-  }
+  const formatDate = (dateString) =>
+    new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
-  const getAccountDisplay = (account) => {
-    return `${account.code} - ${account.name}`
-  }
+  const getAccountDisplay = (account) => `${account.code} - ${account.name}`
 
-  const getCurrentBalance = () => {
-    if (accountTransactions.length === 0) return 0
-    return accountTransactions[accountTransactions.length - 1].runningBalance
-  }
+  const getCurrentBalance = () => (accountTransactions.length === 0 ? 0 : accountTransactions[accountTransactions.length - 1].runningBalance)
 
-  const getDebitTransactions = () => {
-    return accountTransactions.filter(t => t.side === 'debit')
-  }
+  const getDebitTransactions = () => accountTransactions.filter((t) => t.side === 'debit')
 
-  const getCreditTransactions = () => {
-    return accountTransactions.filter(t => t.side === 'credit')
-  }
+  const getCreditTransactions = () => accountTransactions.filter((t) => t.side === 'credit')
 
-  const selectedAccountData = accounts.find(acc => acc.code === selectedAccount)
+  const selectedAccountData = state.accounts.find((acc) => acc.code === selectedAccount)
 
   return (
     <Card>
-      <CardHeader
-        title="T-Accounts View"
-        titleTypographyProps={{ variant: 'h5', fontWeight: 600 }}
-      />
+      <CardHeader title="T-Accounts View" titleTypographyProps={{ variant: 'h5', fontWeight: 600 }} />
       <CardContent>
         <Grid container spacing={3}>
           <Grid item xs={12} md={6}>
             <FormControl fullWidth>
               <InputLabel>Select Account</InputLabel>
-              <Select
-                value={selectedAccount}
-                label="Select Account"
-                onChange={(e) => setSelectedAccount(e.target.value)}
-              >
-                {accounts.map((account) => (
+              <Select value={selectedAccount} label="Select Account" onChange={(e) => setSelectedAccount(e.target.value)}>
+                {state.accounts.map((account) => (
                   <MenuItem key={account.code} value={account.code}>
                     {getAccountDisplay(account)}
                   </MenuItem>
@@ -151,7 +104,6 @@ function TAccountsView() {
 
         {selectedAccount && selectedAccountData && (
           <Box sx={{ mt: 3 }}>
-            {/* T-Account Header */}
             <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
               <Typography variant="h6" align="center" gutterBottom>
                 {getAccountDisplay(selectedAccountData)}
@@ -165,9 +117,7 @@ function TAccountsView() {
               </Typography>
             </Paper>
 
-            {/* T-Account Layout */}
             <Grid container spacing={2}>
-              {/* Debit Side */}
               <Grid item xs={12} md={6}>
                 <Paper elevation={1} sx={{ height: '100%' }}>
                   <Box sx={{ p: 2, bgcolor: 'success.dark', color: 'white' }}>
@@ -199,7 +149,6 @@ function TAccountsView() {
                 </Paper>
               </Grid>
 
-              {/* Credit Side */}
               <Grid item xs={12} md={6}>
                 <Paper elevation={1} sx={{ height: '100%' }}>
                   <Box sx={{ p: 2, bgcolor: 'error.dark', color: 'white' }}>
@@ -232,7 +181,6 @@ function TAccountsView() {
               </Grid>
             </Grid>
 
-            {/* Transaction History Table */}
             {accountTransactions.length > 0 && (
               <Box sx={{ mt: 3 }}>
                 <Typography variant="h6" gutterBottom>
@@ -261,8 +209,8 @@ function TAccountsView() {
                             {transaction.side === 'credit' && formatCurrency(transaction.amount)}
                           </TableCell>
                           <TableCell align="right">
-                            <Typography 
-                              variant="body2" 
+                            <Typography
+                              variant="body2"
                               fontWeight="bold"
                               color={transaction.runningBalance >= 0 ? 'success.main' : 'error.main'}
                             >
@@ -292,4 +240,4 @@ function TAccountsView() {
   )
 }
 
-export default TAccountsView 
+export default TAccountsView

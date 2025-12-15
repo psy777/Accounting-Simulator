@@ -1,45 +1,31 @@
 import React, { useState } from 'react'
-import { 
-  AppBar, 
-  Toolbar, 
-  Typography, 
-  Container, 
-  Tabs, 
-  Tab, 
-  Box 
-} from '@mui/material'
-import { 
-  Add as AddIcon, 
-  List as ListIcon, 
-  AccountBalance as AccountBalanceIcon,
-  Assessment as AssessmentIcon,
-  Settings as SettingsIcon
-} from '@mui/icons-material'
-import JournalEntryForm from './components/JournalEntryForm'
+import { AppBar, Toolbar, Typography, Container, Tabs, Tab, Box, Grid } from '@mui/material'
+import SchoolIcon from '@mui/icons-material/School'
+import ChatIcon from '@mui/icons-material/Chat'
+import SaveIcon from '@mui/icons-material/Save'
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks'
+import PeopleIcon from '@mui/icons-material/People'
+import Dashboard from './components/Dashboard'
 import JournalEntriesTable from './components/JournalEntriesTable'
 import TAccountsView from './components/TAccountsView'
-import BalanceSummary from './components/BalanceSummary'
 import AccountManagement from './components/AccountManagement'
+import ChatPage from './components/ChatPage'
+import GameSetup from './components/GameSetup'
+import GameSaves from './components/GameSaves'
+import StudentDesk from './components/StudentDesk'
+import StoryDialog from './components/StoryDialog'
+import { useGame } from './GameContext'
 
-function TabPanel({ children, value, index, ...other }) {
+function TabPanel({ children, value, index }) {
   return (
-    <div
-      role="tabpanel"
-      hidden={value !== index}
-      id={`simple-tabpanel-${index}`}
-      aria-labelledby={`simple-tab-${index}`}
-      {...other}
-    >
-      {value === index && (
-        <Box sx={{ p: 3 }}>
-          {children}
-        </Box>
-      )}
+    <div role="tabpanel" hidden={value !== index}>
+      {value === index && <Box sx={{ py: 3 }}>{children}</Box>}
     </div>
   )
 }
 
 function App() {
+  const { state } = useGame()
   const [tabValue, setTabValue] = useState(0)
 
   const handleTabChange = (event, newValue) => {
@@ -50,67 +36,63 @@ function App() {
     <div>
       <AppBar position="static" elevation={0}>
         <Toolbar>
-          <AccountBalanceIcon sx={{ mr: 2 }} />
+          <SchoolIcon sx={{ mr: 2 }} />
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-            Double-Entry Bookkeeping Simulator
+            {state.shopName} · Bookkeeper: {state.playerName || 'Set your name in Game setup'}
           </Typography>
         </Toolbar>
       </AppBar>
 
       <Container maxWidth="xl" sx={{ mt: 2 }}>
         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-          <Tabs 
-            value={tabValue} 
-            onChange={handleTabChange} 
-            aria-label="bookkeeping tabs"
-            variant="fullWidth"
-          >
-            <Tab 
-              icon={<AddIcon />} 
-              label="Add Entry" 
-              iconPosition="start"
-            />
-            <Tab 
-              icon={<ListIcon />} 
-              label="Journal Entries" 
-              iconPosition="start"
-            />
-            <Tab 
-              icon={<AccountBalanceIcon />} 
-              label="T-Accounts" 
-              iconPosition="start"
-            />
-            <Tab 
-              icon={<AssessmentIcon />} 
-              label="Balance Summary" 
-              iconPosition="start"
-            />
-            <Tab 
-              icon={<SettingsIcon />} 
-              label="Manage Accounts" 
-              iconPosition="start"
-            />
+          <Tabs value={tabValue} onChange={handleTabChange} aria-label="bookkeeping tabs" variant="scrollable">
+            <Tab icon={<LibraryBooksIcon />} label="Game setup" iconPosition="start" />
+            <Tab icon={<PeopleIcon />} label="Students" iconPosition="start" />
+            <Tab icon={<LibraryBooksIcon />} label="Dashboard" iconPosition="start" />
+            <Tab icon={<LibraryBooksIcon />} label="Journal" iconPosition="start" />
+            <Tab icon={<LibraryBooksIcon />} label="T-Accounts" iconPosition="start" />
+            <Tab icon={<LibraryBooksIcon />} label="Accounts" iconPosition="start" />
+            <Tab icon={<ChatIcon />} label="Ollama chat" iconPosition="start" />
+            <Tab icon={<SaveIcon />} label="Saves" iconPosition="start" />
           </Tabs>
         </Box>
 
         <TabPanel value={tabValue} index={0}>
-          <JournalEntryForm />
+          <GameSetup />
         </TabPanel>
         <TabPanel value={tabValue} index={1}>
-          <JournalEntriesTable />
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={6}>
+              <StudentDesk />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <JournalEntriesTable />
+            </Grid>
+          </Grid>
         </TabPanel>
         <TabPanel value={tabValue} index={2}>
-          <TAccountsView />
+          <Dashboard />
         </TabPanel>
         <TabPanel value={tabValue} index={3}>
-          <BalanceSummary />
+          <JournalEntriesTable />
         </TabPanel>
         <TabPanel value={tabValue} index={4}>
+          <TAccountsView />
+        </TabPanel>
+        <TabPanel value={tabValue} index={5}>
           <AccountManagement />
         </TabPanel>
+        <TabPanel value={tabValue} index={6}>
+          <ChatPage />
+        </TabPanel>
+        <TabPanel value={tabValue} index={7}>
+          <GameSaves />
+        </TabPanel>
       </Container>
+
+      <StoryDialog />
     </div>
   )
 }
 
-export default App 
+export default App
