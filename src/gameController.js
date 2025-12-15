@@ -30,6 +30,7 @@ const createBaseState = () => ({
   accounts: DEFAULT_ACCOUNTS,
   students: DEFAULT_STUDENTS,
   invoices: [],
+  payments: [],
   dialogueQueue: [...DEFAULT_DIALOGUE],
   currentDate: new Date().toISOString(),
 })
@@ -58,7 +59,12 @@ class GameController {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
       try {
-        return JSON.parse(stored)
+        const parsed = JSON.parse(stored)
+        return {
+          ...createBaseState(),
+          ...parsed,
+          payments: parsed.payments || [],
+        }
       } catch (error) {
         console.error('Unable to parse saved game state', error)
       }
@@ -127,6 +133,13 @@ class GameController {
       description,
       amount,
       dueDate,
+      lineItems: [
+        {
+          id: crypto.randomUUID(),
+          label: description,
+          amount,
+        },
+      ],
       status: 'open',
       createdAt: new Date().toISOString(),
     }
@@ -141,7 +154,46 @@ class GameController {
       invoice.id === invoiceId ? { ...invoice, status: 'paid', paidAt: new Date().toISOString() } : invoice,
     )
     this.recordAction({ type: 'invoice', summary: `Marked invoice ${invoiceId} as paid` })
+    const paidInvoice = this.state.invoices.find((invoice) => invoice.id === invoiceId)
+    if (paidInvoice) {
+      this.recordPayment({ invoiceId: paidInvoice.id, amount: paidInvoice.amount, method: 'Chat action', silent: true })
+    }
     this.notify()
+  }
+
+  recordPayment({ invoiceId, amount, method = 'Cash', memo, silent = false }) {
+    const payment = {
+      id: crypto.randomUUID(),
+      invoiceId,
+      amount,
+      method,
+      memo,
+      paidAt: new Date().toISOString(),
+    }
+
+    this.state.payments = [...this.state.payments, payment]
+    this.state.invoices = this.state.invoices.map((invoice) =>
+      invoice.id === invoiceId ? { ...invoice, status: 'paid', paidAt: payment.paidAt } : invoice,
+    )
+    this.recordAction({ type: 'payment', summary: `Received ${method} payment for invoice ${invoiceId}` })
+    if (!silent) {
+      this.notify()
+    }
+  }
+
+  addStudent({ name, instrument = 'Voice', standing = 'lead', balance = 0 }) {
+    const student = {
+      id: crypto.randomUUID(),
+      name,
+      instrument,
+      standing,
+      balance,
+    }
+    this.state.students = [...this.state.students, student]
+    this.recordAction({ type: 'student', summary: `Added new student ${name}` })
+    this.pushDialogue(`${name} just joined the roster after your chat. Send a welcome invoice?`, 'excited')
+    this.notify()
+    return student
   }
 
   updateStudentBalance(studentId, delta) {

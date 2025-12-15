@@ -22,6 +22,8 @@ export function GameProvider({ children }) {
       popDialogue: controller.popDialogue.bind(controller),
       addInvoice: controller.addInvoice.bind(controller),
       settleInvoice: controller.settleInvoice.bind(controller),
+      recordPayment: controller.recordPayment.bind(controller),
+      addStudent: controller.addStudent.bind(controller),
       recordLessonAttendance: controller.recordLessonAttendance.bind(controller),
       updateStudentBalance: controller.updateStudentBalance.bind(controller),
       saveSlot: controller.saveSlot.bind(controller),

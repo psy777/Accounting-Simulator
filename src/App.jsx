@@ -5,6 +5,7 @@ import ChatIcon from '@mui/icons-material/Chat'
 import SaveIcon from '@mui/icons-material/Save'
 import LibraryBooksIcon from '@mui/icons-material/LibraryBooks'
 import PeopleIcon from '@mui/icons-material/People'
+import PaymentIcon from '@mui/icons-material/Payment'
 import Dashboard from './components/Dashboard'
 import JournalEntriesTable from './components/JournalEntriesTable'
 import TAccountsView from './components/TAccountsView'
@@ -14,6 +15,7 @@ import GameSetup from './components/GameSetup'
 import GameSaves from './components/GameSaves'
 import StudentDesk from './components/StudentDesk'
 import StoryDialog from './components/StoryDialog'
+import Payments from './components/Payments'
 import { useGame } from './GameContext'
 
 function TabPanel({ children, value, index }) {
@@ -52,6 +54,7 @@ function App() {
             <Tab icon={<LibraryBooksIcon />} label="Journal" iconPosition="start" />
             <Tab icon={<LibraryBooksIcon />} label="T-Accounts" iconPosition="start" />
             <Tab icon={<LibraryBooksIcon />} label="Accounts" iconPosition="start" />
+            <Tab icon={<PaymentIcon />} label="Payments" iconPosition="start" />
             <Tab icon={<ChatIcon />} label="Ollama chat" iconPosition="start" />
             <Tab icon={<SaveIcon />} label="Saves" iconPosition="start" />
           </Tabs>
@@ -83,9 +86,12 @@ function App() {
           <AccountManagement />
         </TabPanel>
         <TabPanel value={tabValue} index={6}>
-          <ChatPage />
+          <Payments />
         </TabPanel>
         <TabPanel value={tabValue} index={7}>
+          <ChatPage />
+        </TabPanel>
+        <TabPanel value={tabValue} index={8}>
           <GameSaves />
         </TabPanel>
       </Container>
